@@ -1,0 +1,80 @@
+package com.gitpush.app.data
+
+data class GhUser(
+    val login: String,
+    val name: String,
+    val avatarUrl: String,
+    val bio: String?,
+    val followers: Int,
+    val following: Int,
+    val publicRepos: Int
+)
+
+data class GhRepo(
+    val id: Long,
+    val name: String,
+    val fullName: String,
+    val owner: String,
+    val ownerAvatar: String,
+    val description: String?,
+    val isPrivate: Boolean,
+    val language: String?,
+    val stars: Int,
+    val forks: Int,
+    val issues: Int,
+    val defaultBranch: String,
+    val updatedAt: String
+)
+
+data class GhNode(
+    val name: String,
+    val path: String,
+    val type: String, // "file" | "dir"
+    val size: Long,
+    val sha: String
+)
+
+data class GhBranch(val name: String, val commitSha: String)
+
+data class GhCommit(
+    val sha: String,
+    val message: String,
+    val author: String,
+    val avatarUrl: String?,
+    val date: String
+)
+
+data class GhNotification(
+    val id: String,
+    val repoFullName: String,
+    val subjectTitle: String,
+    val subjectType: String,
+    val reason: String,
+    val unread: Boolean,
+    val updatedAt: String
+)
+
+data class GhFileContent(
+    val name: String,
+    val path: String,
+    val sha: String,
+    val size: Long,
+    val type: String,
+    val contentB64: String?
+)
+
+data class TreeNode(
+    val path: String,
+    val sha: String,
+    val type: String, // "blob" | "tree"
+    val size: Long
+)
+
+data class HistoryEntry(
+    val kind: String, // upload | edit | rename | delete | create | repo | download
+    val label: String,
+    val repo: String,
+    val time: Long
+)
+
+data class PickedFile(val path: String, val size: Long, val bytes: ByteArray)
