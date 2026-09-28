@@ -379,3 +379,24 @@ Stage Summary:
 - Pindah file/folder tersedia (ciri khas file manager lengkap: buka, unduh, pindah, rename, edit, hapus).
 - Ikon warna per tipe file + kartu repo premium — tampilan terasa baru.
 - Artefak: GitPush-v1.5.apk (versionCode 10) → Release v1.5.
+
+---
+Task ID: 17
+Agent: Z.ai Code (main)
+Task: Fix Upload Massal gagal untuk file besar — "Terminated string at character 800" (laporan user: upload DragonBall_WEB_202111216_mod.apk 104.964.512 B ke repo dragonballidlde selalu gagal)
+
+Work Log:
+- Diagnosis dari screenshot user: error JSONException "Terminated string at character 800 of {"objects":[...]" muncul saat tahap Unggah (batch API Git LFS) untuk file > 95 MB.
+- Akar masalah ditemukan di callStreamed (GitHubApi.kt): `r.body?.string().orEmpty().take(800)` — respons DIPOTONG di 800 karakter. Respons batch LFS upload berisi URL presigned S3 + header AWS SigV4 yang panjangnya > 800 char. Unduhan tidak kena karena respons batch download lebih pendek dari 800.
+- Verifikasi root cause via curl: repo sementara tmp-lfs-batch-verify dibuat, POST batch upload dengan size 104964512 → respons 1.343 karakter (melewati batas 800). Repo uji dihapus (204).
+- Fix GitHubApi.kt: (1) callStreamed membaca body PENUH tanpa take(800); (2) loop batch LFS ditulis ulang — retry hingga 3x untuk koneksi putus (GhException code 0), HTTP 429/5xx, dan JSON terpotong/rusak (JSONException tertangkap); (3) PUT ke storage LFS diulang hingga 3x saat koneksi putus di tengah upload besar (objek S3 idempotent — aman); (4) blobCreate: code 0 (koneksi putus) masuk daftar retryable — blob content-addressed sehingga aman; (5) humanError — pesan "Terminated string / JSONException" dipetakan ke "Respons GitHub terpotong — koneksi tidak stabil, silakan coba lagi" + semua pesan error dibatasi 180 karakter agar tidak membanjiri layar.
+- Versi: versionCode 10 → 11, versionName 1.5 → 1.6; Settings "GitPush v1.6", Profile "v1.6 NATIVE".
+- Build: assembleRelease BUILD SUCCESSFUL 4m03s; aapt: versionCode 11, versionName 1.6; APK 3.292.741 B → /home/z/my-project/GitPush-v1.6.apk.
+- Push: commit 69e37e6 (fix) — kelalaian: GitPush-v1.6.apk ikut ter-commit karena pola .gitignore belum efektif; diperbaiki commit 49a8bb3 (git rm --cached + .gitignore "GitPush-v*.apk").
+- Release v1.6 (id 398606113) + aset GitPush-v1.6.apk (state uploaded, unduh 200, cmp IDENTIK — unduhan pertama tanpa Accept: application/octet-stream ternyata mengambil metadata JSON, bukan biner).
+
+Stage Summary:
+- Upload file besar (>95 MB) via Git LFS kini berhasil — akar masalahnya bukan LFS-nya, melainkan pembacaan respons yang dipotong 800 karakter.
+- Upload besar jauh lebih tahan banting di jaringan seluler (retry otomatis batch, PUT, dan blob create).
+- Pesan error selalu ringkas & ramah; JSON mentah tidak akan muncul lagi di UI.
+- Artefak: GitPush-v1.6.apk (versionCode 11) → Release v1.6.
