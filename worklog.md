@@ -215,3 +215,26 @@ Stage Summary:
 - Progres kini terlihat bertahap penuh: persiapan → unggah per-byte (kecepatan + ETA + file aktif) → commit → selesai dengan link commit; bisa batal, boleh pindah tab.
 - Tanpa limit: file >95 MB otomatis Git LFS (teruji end-to-end), ratusan file tetap 1 commit dengan throttle adaptif anti limit sekunder, file gagal dilompati tanpa membatalkan commit.
 - APK: GitPush v1.0 (versionCode 3) — install-over langsung di atas versi sebelumnya.
+
+---
+Task ID: 10
+Agent: Z.ai Code (main)
+Task: Rapikan isi Repository GitHub — hapus file sampah & jadikan repo murni aplikasi Android native (feedback user: "sepertinya masih banyak sampah" + "ini kan Native android, itu bun caddy sampahnya buat apa")
+
+Work Log:
+- Audit 196 entri repo remote + pemetaan impor web: 34 dari 49 komponen shadcn/ui tidak pernah diimpor; icon-maskable-512.png byte-identik icon-512.png; brand/verify-01..14.png (14 PNG ±815 KB) bukan input script manapun; src/app/api/route.ts hanya "Hello, world!"; values_ic_launcher_bg.xml duplikat di path res tidak valid; prisma + src/lib/db.ts tidak dipakai; commit lokal de59e6a (pesan UUID, isi tool-results/) sudah di-drop sebelum ter-push (git reset --hard origin/main).
+- Dihapus dari repo (git rm): brand/verify-*.png (14), src/app/api/route.ts, values_ic_launcher_bg.xml, public/icon-maskable-512.png, src/lib/db.ts, src/hooks/use-mobile.ts, prisma/, 34 komponen ui tak terpakai (accordion…toggle-group + alert.tsx) → sisa ui = 14 yang benar-benar diimpor.
+- package.json dibersihkan (hapus prisma, @prisma/client, script db:*) + bun.lock di-refresh via bun install (2 paket removed).
+- scripts/gen-android-icons.mjs diperbaiki: target RES apk-build/ (sisa Capacitor) → native/app/src/main/res.
+- .gitignore diperbaiki: baris rusak "native/build.logtool-results/" dipisah; ditambah Caddyfile, native/run-build.py, tool-results/.
+- Keputusan arsitektur repo (feedback "ini kan Native android"): repo GitHub kini MURNI aplikasi Android native — seluruh layer web dicabut dari tracking (git rm --cached): src/, public/ (termasuk gitpush.apk duplikat — channel resmi unduhan tetap Release asset), package.json, bun.lock, next.config.ts, tailwind.config.ts, postcss.config.mjs, tsconfig.json, components.json, eslint.config.mjs, scripts/gen-icons.mjs. Caddyfile juga dicabut (config gateway sandbox). Semua file tetap ada secara lokal (dev server web companion tetap jalan untuk preview), hanya tidak lagi memenuhi repo.
+- Repo hasil akhir: 52 file — native/ (proyek Android lengkap), brand/icon-raw.png, scripts/gen-android-icons.mjs, README.md, worklog.md, .gitignore.
+- README.md ditulis ulang 100% native: badge, unduh APK via Releases, tabel fitur, cara build (gradlew/Android Studio), struktur proyek, teknologi, catatan PAT/LFS/debug-key — tanpa bagian web.
+- .gitignore dilengkapi section "layer web companion" agar file web tidak ter-track ulang secara tidak sengaja.
+- Scan secret pra-push: 0 token asli (ghp_ hanya placeholder input di AuthScreen.kt + catatan worklog).
+- Lint 0 error; dev server sehat (/, /api/gh/* 200) setelah penghapusan komponen web — memastikan tidak ada impor rusak.
+
+Stage Summary:
+- Repo github.com/anztdree/GitPush kini bersih & fokus: murni source aplikasi Android native (Kotlin + Jetpack Compose) + README proper + jurnal dev — tanpa file web, tanpa scaffold, tanpa aset duplikat.
+- 58+ file sampah & ±4 MB bobot hilang dari HEAD; riwayat commit lama tidak menyimpan file sampah tersebut (history dibuat ulang pada Task 8, cleanup ini hanya menambah commit baru).
+- Unduhan APK tetap: https://github.com/anztdree/GitPush/releases/download/v1.0/GitPush-v1.0.apk

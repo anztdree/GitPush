@@ -6,10 +6,11 @@ import { dirname, join } from 'node:path';
 /**
  * Generate ikon launcher Android (mipmap) + splash untuk APK GitPush.
  * Sumber: brand/icon-raw.png (rounded square di kanvas putih → di-crop full-bleed).
+ * Target: proyek Android native di native/app/src/main/res.
  */
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(root, 'brand', 'icon-raw.png');
-const RES = join(root, 'apk-build', 'android', 'app', 'src', 'main', 'res');
+const RES = join(root, 'native', 'app', 'src', 'main', 'res');
 
 // 1) Deteksi bounding box rounded-square gelap (sama dengan gen-icons.mjs)
 const { data, info } = await sharp(SRC).raw().toBuffer({ resolveWithObject: true });
