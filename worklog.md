@@ -400,3 +400,22 @@ Stage Summary:
 - Upload besar jauh lebih tahan banting di jaringan seluler (retry otomatis batch, PUT, dan blob create).
 - Pesan error selalu ringkas & ramah; JSON mentah tidak akan muncul lagi di UI.
 - Artefak: GitPush-v1.6.apk (versionCode 11) → Release v1.6.
+
+---
+Task ID: 18
+Agent: Z.ai Code (main)
+Task: Pertanyaan user — (1) "source code dan apk gk di upload ke GitHub?", (2) "di dalam Repository tidak ada status update file terakhir seperti di website?"
+
+Work Log:
+- Investigasi repo: source code SUDAH lengkap di GitHub (native/ = proyek Android penuh), semua APK v1.0-v1.6 ada di Releases; ditemukan README masih era v1.1 (sumber kebingungan user) + sisa GitPush-v1.4/1.5.apk masih ter-commit di root (penghapusan Task 16 ternyata tidak efektif).
+- Fitur baru (GitHubApi.kt): fetchLastCommits(token, owner, repo, branch, paths, onResult) — commit terakhir per path via GET /commits?sha=&path=&per_page=1; paralel Semaphore(5), batas 100 path, cache 10 menit per repo@branch:path, hasil PROGRESIF via onResult; gagal per-path diam-diam. invalidateUsage kini ikut membuang lastCommitCache (status segar setelah upload/rename/pindah/hapus).
+- RepoScreen.kt: lastCommits = mutableStateMapOf; LaunchedEffect(nodes, branch) memicu fetch; FileRow param lastCommit + baris baru "ikon History • pesan commit • waktu relatif" di bawah nama (di atas baris ukuran). Icons.Filled.Commit TIDAK tersedia di versi material-icons-extended proyek → diganti Icons.Filled.History (build pertama gagal 1 error, diperbaiki).
+- Bersih-bersih git: git rm GitPush-v1.4.apk GitPush-v1.5.apk (APK hanya di Releases; pola .gitignore sudah menahan yang baru).
+- README.md ditulis ulang: badge v1.7, penjelasan "APK selalu ada di Releases" + link, tabel struktur repo (native/ = kode sumber), fitur diperbarui (status update terakhir, pindah file/folder, progres semua proses), tabel versi v1.0-v1.7.
+- Versi: versionCode 12, versionName 1.7; Settings/Profile "v1.7". Build: percobaan 1 gagal (unresolved Commit icon) → diperbaiki; percobaan 2 gagal daemon gradle → ulang; BUILD SUCCESSFUL 3m04s; aapt versionCode 12 versionName 1.7; APK 3.309.125 B.
+- Push commit 1482f20; Release v1.7 (id 398625005) + aset GitPush-v1.7.apk (uploaded, unduh 200, cmp IDENTIK). Root repo kini bersih: .gitignore, README.md, brand/, native/, scripts/, worklog.md.
+
+Stage Summary:
+- Jawaban Q1: source code lengkap di native/, semua APK v1.0-v1.7 di tab Releases; root repo dibersihkan + README baru menjelaskan keduanya secara permanen.
+- Jawaban Q2: status "commit terakhir • waktu" per file/folder kini tampil di layar Repository, progresif seperti website, dengan cache + invalidasi otomatis.
+- Artefak: GitPush-v1.7.apk (versionCode 12) → Release v1.7.
