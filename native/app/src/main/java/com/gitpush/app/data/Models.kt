@@ -1,5 +1,8 @@
 package com.gitpush.app.data
 
+import android.net.Uri
+import java.io.File
+
 data class GhUser(
     val login: String,
     val name: String,
@@ -77,4 +80,15 @@ data class HistoryEntry(
     val time: Long
 )
 
-data class PickedFile(val path: String, val size: Long, val bytes: ByteArray)
+/**
+ * File yang dipilih untuk upload. Byte TIDAK di-load ke RAM saat memilih —
+ * dibaca baru saat upload (hemat memori untuk folder besar).
+ * Sumber bisa: file fisik (file manager bawaan), Uri SAF, atau byte langsung.
+ */
+data class PickedFile(
+    val path: String,
+    val size: Long,
+    val bytes: ByteArray? = null,
+    val file: File? = null,
+    val uri: Uri? = null
+)

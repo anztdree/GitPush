@@ -1,8 +1,11 @@
 package com.gitpush.app.ui
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,6 +32,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
@@ -47,6 +51,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,13 +61,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.documentfile.provider.DocumentFile
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.gitpush.app.data.GhBranch
 import com.gitpush.app.data.GhRepo
 import com.gitpush.app.data.GitHubApi
@@ -78,23 +84,75 @@ private fun queryDisplayName(ctx: Context, uri: Uri): String? {
     return uri.lastPathSegment?.substringAfterLast('/')
 }
 
-private suspend fun walkTree(
-    ctx: Context, df: DocumentFile, rel: String, out: MutableList<PickedFile>
-): MutableList<PickedFile> = withContext(Dispatchers.IO) {
-    for (f in df.listFiles()) {
-        val name = f.name
-        if (f.isDirectory) {
-            walkTree(ctx, f, if (rel.isEmpty()) (name ?: "") else "$rel/$name", out)
-        } else if (name != null) {
-            val bytes = runCatching {
-                ctx.contentResolver.openInputStream(f.uri)?.use { it.readBytes() }
-            }.getOrNull()
-            if (bytes != null) {
-                out.add(PickedFile(if (rel.isEmpty()) name else "$rel/$name", bytes.size.toLong(), bytes))
+private fun querySize(ctx: Context, uri: Uri): Long {
+    ctx.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+        if (c.moveToFirst() && !c.isNull(0)) return c.getLong(0)
+    }
+    return 0L
+}
+
+/** Gabungkan pilihan baru; path yang sama ditimpa, tidak diduplikasi */
+private fun mergePicked(old: List<PickedFile>, add: List<PickedFile>): List<PickedFile> {
+    if (add.isEmpty()) return old
+    val addPaths = add.map { it.path }.toSet()
+    return old.filterNot { it.path in addPaths } + add
+}
+
+private data class SafEntry(val docId: String, val name: String, val mime: String?, val size: Long)
+private data class SafScan(val files: List<PickedFile>, val skipped: Int, val truncated: Boolean)
+
+/** List isi folder SAF dalam SATU query — cepat & lengkap (pengganti DocumentFile.listFiles) */
+private fun safChildren(resolver: android.content.ContentResolver, treeUri: Uri, docId: String): List<SafEntry> {
+    val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
+    val proj = arrayOf(
+        DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+        DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+        DocumentsContract.Document.COLUMN_MIME_TYPE,
+        DocumentsContract.Document.COLUMN_SIZE
+    )
+    val out = mutableListOf<SafEntry>()
+    runCatching {
+        resolver.query(childrenUri, proj, null, null, null)?.use { c ->
+            while (c.moveToNext()) {
+                val id = c.getString(0) ?: continue
+                val name = c.getString(1) ?: id.substringAfterLast(':').ifEmpty { id }
+                out.add(SafEntry(id, name, c.getString(2), c.getLong(3)))
             }
         }
     }
-    out
+    return out
+}
+
+/**
+ * Pindai pohon folder SAF (BFS) — byte TIDAK dibaca, hanya metadata.
+ * Semua file tercatat; folder yang tak bisa dibaca dihitung sebagai "skipped".
+ */
+private suspend fun scanSafTree(
+    resolver: android.content.ContentResolver, treeUri: Uri, baseRel: String
+): SafScan = withContext(Dispatchers.IO) {
+    val files = mutableListOf<PickedFile>()
+    var skipped = 0
+    val dirs = ArrayDeque<Pair<String, String>>() // docId to relative path
+    dirs.add(DocumentsContract.getTreeDocumentId(treeUri) to baseRel)
+    while (dirs.isNotEmpty() && files.size < MAX_SCAN_FILES) {
+        val (docId, rel) = dirs.removeFirst()
+        for (ch in safChildren(resolver, treeUri, docId)) {
+            val childRel = if (rel.isEmpty()) ch.name else "$rel/${ch.name}"
+            when {
+                ch.mime == DocumentsContract.Document.MIME_TYPE_DIR -> {
+                    if (files.size + dirs.size < MAX_SCAN_FILES) dirs.add(ch.docId to childRel) else skipped++
+                }
+                ch.mime == null || !ch.mime.startsWith("vnd.android.document") -> files.add(
+                    PickedFile(
+                        childRel, ch.size,
+                        uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, ch.docId)
+                    )
+                )
+                else -> skipped++
+            }
+        }
+    }
+    SafScan(files, skipped, files.size >= MAX_SCAN_FILES)
 }
 
 @Composable
@@ -118,6 +176,24 @@ fun UploadScreen() {
     var progress by remember { mutableStateOf<Triple<String, Int, Int>?>(null) }
     var doneSha by remember { mutableStateOf<String?>(null) }
 
+    var showBrowser by remember { mutableStateOf(false) }
+    var safScanning by remember { mutableStateOf(false) }
+    var storageGranted by remember { mutableStateOf(hasAllFilesAccess(ctx)) }
+
+    val writeLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { storageGranted = hasAllFilesAccess(ctx) }
+
+    // Perbarui status izin saat kembali dari pengaturan
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_RESUME) storageGranted = hasAllFilesAccess(ctx)
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     LaunchedEffect(Unit) {
         if (Store.repos.value.isEmpty()) {
             runCatching {
@@ -139,24 +215,36 @@ fun UploadScreen() {
         }
     }
 
+    // ===== Picker SAF: file tunggal/lebih (byte dibaca saat upload, bukan sekarang) =====
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val input: List<Uri> = uris.toList()
         if (input.isNotEmpty()) {
             scope.launch {
+                var failed = 0
                 val list = withContext(Dispatchers.IO) {
                     input.mapNotNull { u: Uri ->
-                        val name = queryDisplayName(ctx, u) ?: return@mapNotNull null
-                        val bytes = runCatching {
-                            ctx.contentResolver.openInputStream(u)?.use { it.readBytes() }
-                        }.getOrNull() ?: return@mapNotNull null
-                        PickedFile(name, bytes.size.toLong(), bytes)
+                        runCatching {
+                            ctx.contentResolver.takePersistableUriPermission(
+                                u, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
+                        val name = queryDisplayName(ctx, u)
+                        if (name == null) {
+                            failed++
+                            null
+                        } else {
+                            PickedFile(name, querySize(ctx, u), uri = u)
+                        }
                     }
                 }
-                picked = picked + list
+                picked = mergePicked(picked, list)
+                if (failed > 0) toast("$failed file tidak dapat dibaca (dilewati)")
+                if (list.isNotEmpty()) toast("${list.size} file ditambahkan")
             }
         }
     }
 
+    // ===== Picker SAF: folder penuh (scanner cepat via DocumentsContract) =====
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             scope.launch {
@@ -165,17 +253,17 @@ fun UploadScreen() {
                         uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
                     )
                 }
-                val tree = DocumentFile.fromTreeUri(ctx, uri)
-                if (tree == null) {
-                    toast("Tidak bisa membuka folder")
-                    return@launch
-                }
-                val list = walkTree(ctx, tree, "", mutableListOf())
-                if (list.isEmpty()) {
-                    toast("Folder kosong")
+                safScanning = true
+                val scan = scanSafTree(ctx.contentResolver, uri, "")
+                safScanning = false
+                if (scan.files.isEmpty()) {
+                    toast("Folder kosong atau tidak dapat dibaca")
                 } else {
-                    picked = picked + list
-                    toast("${list.size} file dari folder ditambahkan")
+                    picked = mergePicked(picked, scan.files)
+                    var m = "${scan.files.size} file dari folder ditambahkan"
+                    if (scan.skipped > 0) m += " • ${scan.skipped} dilewati"
+                    if (scan.truncated) m += " • dibatasi $MAX_SCAN_FILES file"
+                    toast(m)
                 }
             }
         }
@@ -198,11 +286,12 @@ fun UploadScreen() {
                 try {
                     val targetFolder = folder.trim().trimStart('/').trimEnd('/')
                     val files = if (targetFolder.isEmpty()) picked else picked.map {
-                        PickedFile("$targetFolder/${it.path}", it.size, it.bytes)
+                        PickedFile("$targetFolder/${it.path}", it.size, it.bytes, it.file, it.uri)
                     }
                     val sha = withContext(Dispatchers.IO) {
                         GitHubApi.bulkUpload(
-                            Store.token.value, r.owner, r.name, branch.trim(), files, message
+                            Store.token.value, r.owner, r.name, branch.trim(), files, message,
+                            ctx.contentResolver
                         ) { stage, d, t -> progress = Triple(stage, d, t) }
                     }
                     doneSha = sha
@@ -290,7 +379,61 @@ fun UploadScreen() {
                     )
                 }
 
+                // ===== Banner izin penyimpanan =====
+                if (!storageGranted) {
+                    Spacer(Modifier.height(12.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Lock,
+                                contentDescription = null,
+                                tint = GrayMuted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Folder di HP belum terbaca sempurna. Beri izin \u201CSemua file\u201D " +
+                                    "agar File Manager menampilkan semua folder & file.",
+                                Modifier.weight(1f),
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp
+                            )
+                            TextButton(
+                                onClick = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                        openAllFilesSettings(ctx)
+                                    } else {
+                                        writeLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                                    }
+                                }
+                            ) { Text("Beri Izin", fontSize = 12.sp) }
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(14.dp))
+                // ===== Tombol utama: File Manager bawaan =====
+                Button(
+                    onClick = { showBrowser = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenDeep),
+                    modifier = Modifier.fillMaxWidth().height(46.dp)
+                ) {
+                    Icon(Icons.Filled.FolderOpen, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Buka File Manager (semua folder HP)",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(
                         onClick = { filePicker.launch(arrayOf("*/*")) },
@@ -298,7 +441,7 @@ fun UploadScreen() {
                     ) {
                         Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Pilih File")
+                        Text("Pilih File", fontSize = 13.sp)
                     }
                     OutlinedButton(
                         onClick = { folderPicker.launch(null) },
@@ -306,7 +449,25 @@ fun UploadScreen() {
                     ) {
                         Icon(Icons.Filled.FolderOpen, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Pilih Folder")
+                        Text("Pilih Folder", fontSize = 13.sp)
+                    }
+                }
+                Text(
+                    "Pilih File/Folder memakai penyimpanan sistem (SAF) — pakai File Manager agar semua folder terbaca.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+
+                if (safScanning) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            color = GreenPrimary, strokeWidth = 2.dp, modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Memindai folder…", fontSize = 12.sp)
                     }
                 }
 
@@ -442,6 +603,18 @@ fun UploadScreen() {
         }
     }
 
+    if (showBrowser) {
+        FilePickerDialog(
+            baseDir = remember { defaultStorageDir() },
+            onDismiss = { showBrowser = false },
+            onPicked = { list ->
+                showBrowser = false
+                picked = mergePicked(picked, list)
+                if (list.isNotEmpty()) toast("${list.size} file ditambahkan dari HP")
+            }
+        )
+    }
+
     if (showRepoPicker) {
         RepoPickerDialog(
             loading = loadingRepos,
@@ -525,4 +698,3 @@ private fun RepoPickerDialog(onDismiss: () -> Unit, onPick: (GhRepo) -> Unit, lo
         }
     }
 }
-

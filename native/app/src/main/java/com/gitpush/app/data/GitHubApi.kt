@@ -271,6 +271,7 @@ object GitHubApi {
     suspend fun bulkUpload(
         token: String, owner: String, repo: String, branch: String,
         files: List<PickedFile>, message: String,
+        resolver: android.content.ContentResolver?,
         onProgress: (String, Int, Int) -> Unit
     ): String = withContext(Dispatchers.IO) {
         onProgress("Menyiapkan commit", 0, files.size)
@@ -288,7 +289,18 @@ object GitHubApi {
             files.mapIndexed { idx, f ->
                 async {
                     sem.withPermit {
-                        val b64 = Base64.encodeToString(f.bytes, Base64.NO_WRAP)
+                        // Baca byte SAAT UPLOAD (bukan saat memilih) — hanya ±3 file di RAM
+                        val bytes = when {
+                            f.file != null -> runCatching { f.file.readBytes() }.getOrElse {
+                                throw GhException("Gagal membaca: ${f.path}")
+                            }
+                            f.uri != null && resolver != null -> runCatching {
+                                resolver.openInputStream(f.uri)?.use { it.readBytes() }
+                            }.getOrNull() ?: throw GhException("Gagal membaca: ${f.path}")
+                            else -> f.bytes ?: throw GhException("Sumber file tidak ada: ${f.path}")
+                        }
+                        if (bytes.isEmpty()) throw GhException("File kosong/tidak terbaca: ${f.path}")
+                        val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
                         val res = call(
                             token, "POST", "/repos/$owner/$repo/git/blobs",
                             JSONObject().put("content", b64).put("encoding", "base64")
