@@ -6,7 +6,7 @@
 **Aplikasi Android murni native (Kotlin + Jetpack Compose) — file manager + penyimpanan awan di atas repository GitHub.** Pengganti aplikasi GitHub resmi dengan identitas utama: **file manager yang bisa mengelola file repository layaknya penyimpanan awan** — buka, unduh, pindah, rename, edit, hapus, ZIP, plus **upload massal banyak file & folder dalam 1 commit**.
 
 <p>
-  <img src="https://img.shields.io/badge/version-1.8-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-1.0-blue" alt="version" />
   <img src="https://img.shields.io/badge/platform-Android%209%2B-green" alt="platform" />
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-orange" alt="compose" />
   <img src="https://img.shields.io/badge/ukuran%20APK-~3%20MB-success" alt="size" />
@@ -20,13 +20,13 @@
 
 **APK selalu ada di halaman [Releases](https://github.com/anztdree/GitPush/releases/latest)** (panel kanan halaman repo → bagian *Releases*):
 
-**[⬇️ GitPush-v1.8.apk — Releases](https://github.com/anztdree/GitPush/releases/latest)**
+**[⬇️ GitPush-v1.0.apk — Releases](https://github.com/anztdree/GitPush/releases/latest)**
 
-1. Buka [halaman Releases](https://github.com/anztdree/GitPush/releases/latest) → unduh `GitPush-v1.8.apk`
+1. Buka [halaman Releases](https://github.com/anztdree/GitPush/releases/latest) → unduh `GitPush-v1.0.apk`
 2. Buka file → izinkan *Install dari sumber tidak dikenal*
 3. Login menggunakan **Personal Access Token (PAT)** GitHub (scope `repo`)
 
-> 📌 Catatan: APK **tidak** diletakkan sebagai file biasa di daftar file repo — semua versi (v1.0 s.d. v1.8) tersimpan rapi di tab **Releases** agar repo tetap ramping.
+> 📌 Catatan: APK **tidak** diletakkan sebagai file biasa di daftar file repo — APK selalu tersimpan rapi di tab **Releases** agar repo tetap ramping.
 
 ## 📁 Struktur Repository (kode sumber lengkap tersedia)
 
@@ -74,17 +74,9 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-| Versi | Sorotan |
-|---|---|
-| **v1.8** | Baris file: hanya waktu update terakhir (pesan commit dihapus — bikin waktu kepotong) |
-| **v1.7** | Status update terakhir per file/folder ala website GitHub |
-| **v1.6** | Fix upload file besar (LFS) — respons API terpotong 800 karakter |
-| **v1.5** | Dialog progres untuk semua proses + riwayat commit & README jadi tombol + pindah file/folder |
-| **v1.4** | Fix unduhan 0 KB (streaming blob mentah) |
-| **v1.3** | Hapus repository |
-| **v1.2** | Navigasi folder & ukuran file riil |
-| **v1.1** | Folder manager & kuota 2 GB |
-| **v1.0** | Rilis pertama — upload massal 1 commit |
+Aplikasi memakai label versi **1.0** (tahap stabilisasi — versi terlihat tidak berubah-ubah). Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+Sorotan build saat ini: fix upload file besar (LFS) untuk retry setelah upaya nyaris berhasil, deteksi repo terhapus, baris file menampilkan waktu update terakhir.
 
 ---
 

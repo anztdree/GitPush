@@ -141,8 +141,8 @@ object GitHubApi {
         return when {
             code == 401 -> "Token tidak valid atau kedaluwarsa (401)"
             code == 403 && msg.contains("secondary", true) -> "Limit sementara GitHub tercapai — tunggu sebentar lalu coba lagi (403)"
-            code == 403 -> "Akses ditolak / limit API tercapai (403)"
-            code == 404 -> "Tidak ditemukan (404)"
+            code == 403 -> if (msg.startsWith("Repository", true)) msg else "Akses ditolak / limit API tercapai (403)"
+            code == 404 -> if (msg.startsWith("Repository", true)) msg else "Tidak ditemukan (404)"
             code == 409 -> "Repository kosong (409)"
             code == 422 -> "Data tidak valid (422) — cek nama/isi atau branch sudah berubah"
             code == 499 -> "Dibatalkan"
@@ -971,6 +971,30 @@ object GitHubApi {
         o.optString("sha")
     }
 
+    /** Cek apakah objek LFS sudah tersimpan di penyimpanan GitHub (batch download). */
+    private suspend fun UpCtx.lfsObjectExists(oid: String, size: Long): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val basic = Base64.encodeToString("$token:x-oauth-basic".toByteArray(), Base64.NO_WRAP)
+                val body = JSONObject()
+                    .put("operation", "download")
+                    .put("transfers", JSONArray().put("basic"))
+                    .put("hash_algo", "sha256")
+                    .put("objects", JSONArray().put(JSONObject().put("oid", oid).put("size", size)))
+                val res = callStreamed(
+                    "https://github.com/$owner/$repo.git/info/lfs/objects/batch", "POST", "",
+                    body.toString().toRequestBody(lfsMedia),
+                    mapOf("Accept" to "application/vnd.git-lfs+json", "Authorization" to "Basic $basic")
+                )
+                if (res.first !in 200..299) return@withContext false
+                val o = JSONObject(res.second).optJSONArray("objects")?.optJSONObject(0)
+                    ?: return@withContext false
+                !o.has("error") && o.optJSONObject("actions")?.has("download") == true
+            } catch (e: GhException) {
+                false
+            }
+        }
+
     private fun lfsPointer(oid: String, size: Long): String =
         "version https://git-lfs.github.com/spec/v1\noid sha256:$oid\nsize $size\n"
 
@@ -1005,7 +1029,17 @@ object GitHubApi {
                 when (res.first) {
                     in 200..299 -> obj = JSONObject(res.second).optJSONArray("objects")?.optJSONObject(0)
                     429, 500, 502, 503, 504 -> retryable = true
-                    else -> throw GhException("Git LFS ditolak (HTTP ${res.first}): ${res.second.take(140)}", res.first)
+                    else -> {
+                        // GitHub membalas 403 "Bad credentials" di endpoint LFS bila repo
+                        // sudah DIHAPUS/tidak dapat diakses — auth ke api.github.com tetap valid.
+                        if (res.first == 403 && res.second.contains("Bad credentials")) {
+                            throw GhException("Repository tidak dapat diakses — kemungkinan sudah dihapus (403)", 403)
+                        }
+                        if (res.first == 404) {
+                            throw GhException("Repository tidak ditemukan — kemungkinan sudah dihapus (404)", 404)
+                        }
+                        throw GhException("Git LFS ditolak (HTTP ${res.first}): ${res.second.take(140)}", res.first)
+                    }
                 }
             } catch (e: GhException) {
                 if (e.code != 0) throw e
@@ -1027,8 +1061,18 @@ object GitHubApi {
         batchObj.optJSONObject("error")?.let { e ->
             throw GhException("Git LFS: ${e.optString("message", "gagal")}", e.optInt("code"))
         }
+        // Spesifikasi Git LFS: respons upload TANPA "actions" berarti objek SUDAH tersimpan
+        // di penyimpanan LFS (upaya sebelumnya sempat terunggah lalu gagal di tahap commit).
+        // JANGAN dianggap gagal — konfirmasi via batch download; bila benar ada, lewati PUT
+        // (tidak mengulang unggah 100 MB) dan langsung lanjut ke commit pointer.
         val actions = batchObj.optJSONObject("actions")
-            ?: throw GhException("Git LFS tidak tersedia untuk repository ini (kuota/disabled)")
+        if (actions == null) {
+            if (lfsObjectExists(oid, size)) return@withContext
+            throw GhException(
+                "Git LFS menolak unggahan file ini — kemungkinan kuota LFS habis. Cek: github.com/settings/billing",
+                0
+            )
+        }
 
         // --- PUT ke storage (URL presigned; JANGAN tambah header auth sendiri) ---
         val up = actions.optJSONObject("upload") ?: throw GhException("URL upload LFS tidak tersedia")
