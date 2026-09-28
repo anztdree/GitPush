@@ -6,7 +6,7 @@
 **Aplikasi Android murni native (Kotlin + Jetpack Compose) untuk mengelola repository GitHub dari HP** — lengkap dengan fitur andalan yang tidak dimiliki aplikasi GitHub resmi: **upload massal banyak file & folder dalam satu commit**.
 
 <p>
-  <img src="https://img.shields.io/badge/version-1.0-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-1.1-blue" alt="version" />
   <img src="https://img.shields.io/badge/platform-Android%209%2B-green" alt="platform" />
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-orange" alt="compose" />
   <img src="https://img.shields.io/badge/ukuran%20APK-~3%20MB-success" alt="size" />
@@ -20,9 +20,9 @@
 
 Unduh langsung dari halaman Release:
 
-**[GitPush-v1.0.apk → Releases](https://github.com/anztdree/GitPush/releases/latest)**
+**[GitPush-v1.1.apk → Releases](https://github.com/anztdree/GitPush/releases/latest)**
 
-1. Unduh `GitPush-v1.0.apk`
+1. Unduh `GitPush-v1.1.apk`
 2. Buka file → izinkan *Install dari sumber tidak dikenal*
 3. Login menggunakan **Personal Access Token (PAT)** GitHub (scope `repo`)
 
