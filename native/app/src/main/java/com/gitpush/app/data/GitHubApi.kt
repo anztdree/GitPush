@@ -247,7 +247,7 @@ object GitHubApi {
             val b64 = if (o.isNull("content")) null else o.optString("content")
             var size = o.optLong("size")
             var isLfs = false
-            if (b64 != null && size in 100..600) {
+            if (b64 != null && size in 120..160) {
                 val txt = runCatching { String(Base64.decode(b64, Base64.DEFAULT)) }.getOrDefault("")
                 lfsPointerInfo(txt)?.let { (_, real) -> size = real; isLfs = true }
             }
@@ -375,14 +375,14 @@ object GitHubApi {
     }
 
     /**
-     * Selidiki blob kecil (kandidat pointer LFS: 100–600 B, maks 60 blob, 6 paralel)
-     * → peta blobSha → (oid, ukuran asli). Gagal per-blob diabaikan.
+     * Selidiki blob kecil (kandidat pointer LFS: 120–160 B — panjang pointer selalu 124–140 B,
+     * maks 60 blob, 6 paralel) → peta blobSha → (oid, ukuran asli). Gagal per-blob diabaikan.
      */
     suspend fun resolveLfsPointers(
         token: String, owner: String, repo: String,
         candidates: List<Pair<String, Long>> // sha → ukuran di tree
     ): Map<String, Pair<String, Long>> {
-        val sel = candidates.filter { it.second in 100..600 }.take(60)
+        val sel = candidates.filter { it.second in 120..160 }.take(60)
         if (sel.isEmpty()) return emptyMap()
         val sem = Semaphore(6)
         val out = ConcurrentHashMap<String, Pair<String, Long>>()
