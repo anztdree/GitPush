@@ -194,3 +194,24 @@ Stage Summary:
 - Pemilihan file upload kini 3 jalur: File Manager bawaan (utama, semua folder/file terbaca sempurna), Pilih File SAF, Pilih Folder SAF (diperbaiki).
 - Tanpa OOM di folder besar (byte dibaca saat upload, 3 file di RAM), tanpa file hilang diam-diam (semua kegagalan dilaporkan).
 - Artefak: FileBrowser.kt baru, UploadScreen/GitHubApi/Models/Manifest/build.gradle diperbarui; APK v1.0 (versionCode 3) di public/gitpush.apk + aset release.
+
+---
+Task ID: 9
+Agent: Z.ai Code (main)
+Task: Perbaiki alur upload native — (1) multi-file & folder salah ("cuma 1 file ter-upload, folder ikut ter-upload"), (2) progres tidak terlihat jelas, (3) limit ukuran/jumlah file (permintaan: upload 100MB+ & 100+ file tanpa limit)
+
+Work Log:
+- Diagnosa: (a) File Manager internal memetakan path file terhadap ROOT penyimpanan sehingga folder sumber ikut jadi path repo (mis. "Download/x.png"); (b) seleksi per-ketukan (tanpa pilih semua/multi-gesture); (c) progres hanya 1 baris teks inline; (d) cap total 95 MB + blob via JSON base64 utuh di RAM; (e) file 0 byte membatalkan seluruh upload.
+- Uji API langsung via curl ke repo GitPush: raw octet-stream blob = DITOLAK (400) → wajib JSON base64; blob JSON OK; blob kosong OK (sha e69de29…); Git LFS penuh OK: batch (Basic token:x-oauth-basic) → PUT S3 presigned (header persis dari respons, tanpa auth tambahan) → verify (RemoteAuth header) semuanya 200.
+- GitHubApi.kt (rewrite engine upload): streaming base64 JSON RequestBody (encode per-chunk 3×32 KB, RAM kecil, contentLength eksak); LFS otomatis untuk file >95 MB (sha256 streaming → batch → PUT → verify → commit pointer versi https://git-lfs.github.com/spec/v1); file 0 byte pakai EMPTY_BLOB_SHA tanpa request; paralel 3 + Throttle adaptif (slow-down saat 403 sekunder/429 + hormati Retry-After) + retry 5x (5xx/IO); kegagalan per-file dilompati & dicatat (upload tetap jalan); commit loop anti fast-forward (rebuild tree maks 3x saat branch bergerak); writeTimeout 300s.
+- UploadManager.kt (baru): state upload tingkat proses (mutableStateOf) — upload tetap berjalan saat pindah tab; fase prepare/upload/commit/done/error/cancel; byte total/progres, file i/N, file aktif + progres per-file, speed sampler 600 ms, ETA, daftar skipped, commit sha, cancel (flag + job.cancel()).
+- FileBrowser.kt: MAX_SCAN_FILES 2000→10000; checkbox folder + tekan-lama folder = pilih seluruh isi rekursif (nama folder jadi prefix, jelas & disengaja); tekan-lama file = pilih; tombol "Pilih semua" (semua file folder aktif); "Pilih Folder Ini" tetap relatif tanpa nama; mapRelative() common-ancestor — file yang dipilih satuan di-commit sebagai path relatif leluhur bersama (TIDAK lagi "Download/x.png"); hint path di bar bawah.
+- UploadScreen.kt (rewrite): panel progres penuh — stepper 4 tahap (Persiapan/Unggah/Commit/Selesai), bar byte keseluruhan + %, kecepatan, ETA, file aktif + mini-bar, daftar gagal (lihat semua), tombol Batalkan (konfirmasi), kartu sukses dengan "Buka commit di GitHub" (ACTION_VIEW), kartu error/cancel dengan pilihan dipertahankan untuk retry; FLAG_KEEP_SCREEN_ON selama upload; hapus cap 95 MB total; chip info "N via LFS"; header "tanpa batas ukuran".
+- Build: run-build.py (daemonizer) → assembleRelease BUILD SUCCESSFUL; aapt: versionCode 3, versionName 1.0, INTERNET+MANAGE_EXTERNAL_STORAGE(+WRITE maxSdk 32); 3.030.597 byte; public/gitpush.apk diganti; serve 200 di web.
+- Git: commit + push source (scan secret 0), aset Release v1.0 diganti (nama sama GitPush-v1.0.apk).
+
+Stage Summary:
+- Alur pilihan sekarang: ketuk banyak file → Tambahkan → path di repo = nama file/struktur relatif saja (folder HP tidak ikut); pilih folder eksplisit tetap menjaga struktur dalam folder.
+- Progres kini terlihat bertahap penuh: persiapan → unggah per-byte (kecepatan + ETA + file aktif) → commit → selesai dengan link commit; bisa batal, boleh pindah tab.
+- Tanpa limit: file >95 MB otomatis Git LFS (teruji end-to-end), ratusan file tetap 1 commit dengan throttle adaptif anti limit sekunder, file gagal dilompati tanpa membatalkan commit.
+- APK: GitPush v1.0 (versionCode 3) — install-over langsung di atas versi sebelumnya.

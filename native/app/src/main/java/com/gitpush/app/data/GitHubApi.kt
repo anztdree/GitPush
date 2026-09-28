@@ -9,34 +9,71 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedOutputStream
+import java.io.ByteArrayInputStream
+import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-class GhException(message: String, val code: Int = 0) : Exception(message)
+class GhException(message: String, val code: Int = 0, val retryAfterMs: Long = 0) : Exception(message)
+
+/** Callback progres untuk bulkUpload — dipanggil dari thread IO (aman untuk state Compose). */
+class UploadHooks(
+    val onStage: (String) -> Unit = {},
+    val onTotal: (files: Int, bytes: Long) -> Unit = { _, _ -> },
+    val onCurrent: (path: String, sent: Long, total: Long) -> Unit = { _, _, _ -> },
+    val onFileDone: (path: String, size: Long) -> Unit = { _, _ -> },
+    val onFileSkipped: (path: String, size: Long, reason: String) -> Unit = { _, _, _ -> },
+    val isCancelled: () -> Boolean = { false }
+)
+
+data class UploadResult(
+    val commitSha: String,
+    val uploaded: Int,
+    val skipped: List<Pair<String, String>>,
+    val elapsedMs: Long
+)
 
 object GitHubApi {
 
     const val API = "https://api.github.com"
 
+    /** File di atas ambang ini otomatis dikirim via Git LFS (limit blob API GitHub ±100 MB). */
+    const val LFS_THRESHOLD_BYTES = 95L * 1024 * 1024
+
+    /** SHA blob kosong yang dikenal git — tidak perlu request API untuk file 0 byte. */
+    const val EMPTY_BLOB_SHA = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(180, TimeUnit.SECONDS)
+        .writeTimeout(300, TimeUnit.SECONDS)
         .build()
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
+    private val lfsMedia = "application/vnd.git-lfs+json".toMediaType()
+
+    private const val B64_PREFIX = "{\"content\":\""
+    private const val B64_SUFFIX = "\",\"encoding\":\"base64\"}"
 
     private fun req(token: String, method: String, url: String, body: JSONObject?): Request {
         val b = Request.Builder().url(url)
@@ -59,7 +96,8 @@ object GitHubApi {
             val url = if (path.startsWith("http")) path else API + path
             http.newCall(req(token, method, url, body)).execute().use { r ->
                 val text = r.body?.string() ?: ""
-                if (!r.isSuccessful) throw GhException("HTTP ${r.code}: ${text.take(180)}", r.code)
+                val ra = r.header("Retry-After")?.toLongOrNull()?.times(1000) ?: 0L
+                if (!r.isSuccessful) throw GhException("HTTP ${r.code}: ${text.take(180)}", r.code, ra)
                 if (text.isEmpty()) JSONObject() else JSONObject(text)
             }
         }
@@ -73,16 +111,39 @@ object GitHubApi {
             }
         }
 
+    /** Request dengan body mentah (streaming) — mengembalikan (kode, teks, retryAfterMs). */
+    private suspend fun callStreamed(
+        url: String, method: String, token: String,
+        body: RequestBody, headers: Map<String, String> = emptyMap()
+    ): Triple<Int, String, Long> = withContext(Dispatchers.IO) {
+        val b = Request.Builder().url(url).header("User-Agent", "GitPush-Android")
+        if (token.isNotEmpty()) b.header("Authorization", "Bearer $token")
+        headers.forEach { (k, v) -> b.header(k, v) }
+        if (method == "PUT") b.put(body) else b.post(body)
+        try {
+            http.newCall(b.build()).execute().use { r ->
+                val text = r.body?.string().orEmpty().take(800)
+                val ra = r.header("Retry-After")?.toLongOrNull()?.times(1000) ?: 0L
+                Triple(r.code, text, ra)
+            }
+        } catch (e: IOException) {
+            throw GhException(e.message ?: "Koneksi gagal", 0)
+        }
+    }
+
     fun humanError(e: Throwable): String {
         val code = (e as? GhException)?.code ?: 0
+        val msg = e.message ?: ""
         return when {
             code == 401 -> "Token tidak valid atau kedaluwarsa (401)"
+            code == 403 && msg.contains("secondary", true) -> "Limit sementara GitHub tercapai — tunggu sebentar lalu coba lagi (403)"
             code == 403 -> "Akses ditolak / limit API tercapai (403)"
             code == 404 -> "Tidak ditemukan (404)"
             code == 409 -> "Repository kosong (409)"
-            code == 422 -> "Data tidak valid (422) — cek nama/isi"
-            e.message?.contains("Unable to resolve host", true) == true -> "Tidak ada koneksi internet"
-            else -> e.message ?: "Terjadi kesalahan"
+            code == 422 -> "Data tidak valid (422) — cek nama/isi atau branch sudah berubah"
+            code == 499 -> "Dibatalkan"
+            msg.contains("Unable to resolve host", true) -> "Tidak ada koneksi internet"
+            else -> msg.ifEmpty { "Terjadi kesalahan" }
         }
     }
 
@@ -266,15 +327,34 @@ object GitHubApi {
             }
         }
 
-    // ============ BULK UPLOAD (1 COMMIT) ============
+    // ============ BULK UPLOAD (1 COMMIT — TANPA LIMIT UKURAN/JUMLAH) ============
 
+    /**
+     * - Blob dikirim via JSON base64 yang di-STREAM per chunk (RAM kecil, file ratusan MB aman).
+     * - File > 95 MB otomatis via Git LFS (hash → batch → PUT → verify → commit pointer).
+     * - File 0 byte memakai sha blob kosong bawaan git (tanpa request).
+     * - 3 file paralel + throttle adaptif + retry otomatis (limit sekunder GitHub).
+     * - File yang gagal dilompati (dicatat), sisanya tetap di-commit.
+     * - Jika branch bergerak saat commit (non fast-forward), diulang maksimal 3x.
+     */
     suspend fun bulkUpload(
         token: String, owner: String, repo: String, branch: String,
-        files: List<PickedFile>, message: String,
+        filesIn: List<PickedFile>, message: String,
         resolver: android.content.ContentResolver?,
-        onProgress: (String, Int, Int) -> Unit
-    ): String = withContext(Dispatchers.IO) {
-        onProgress("Menyiapkan commit", 0, files.size)
+        hooks: UploadHooks
+    ): UploadResult = withContext(Dispatchers.IO) {
+        val started = System.currentTimeMillis()
+        val throttle = Throttle()
+        val ctx = UpCtx(token, owner, repo, resolver, hooks, throttle)
+
+        // Sanitasi path + buang duplikat
+        val files = filesIn.map { f ->
+            val p = f.path.trim().replace('\\', '/').trimStart('/').replace(Regex("/+"), "/")
+            if (p != f.path) f.copy(path = p) else f
+        }.distinctBy { it.path }
+        if (files.isEmpty()) throw GhException("Tidak ada file untuk di-commit")
+
+        hooks.onStage("Menyiapkan")
         val baseCommitSha = try {
             refSha(token, owner, repo, branch)
         } catch (e: GhException) {
@@ -282,73 +362,399 @@ object GitHubApi {
         }
         val baseTreeSha = baseCommitSha?.let { commitTreeSha(token, owner, repo, it) }
 
+        // Rencana: ukuran pasti (probe bila metadata 0) + sha256 utk LFS
+        val plans = ArrayList<Plan>(files.size)
+        var totalBytes = 0L
+        for (f in files) {
+            if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
+            var size = f.size
+            var sha256: String? = null
+            if (size <= 0) {
+                val p = hashAndSize(resolver, f)
+                size = p.first
+                sha256 = p.second
+            }
+            val lfs = size > LFS_THRESHOLD_BYTES
+            if (lfs && sha256 == null) sha256 = hashAndSize(resolver, f).second
+            plans.add(Plan(f, size, sha256, lfs))
+            totalBytes += size
+        }
+        hooks.onTotal(files.size, totalBytes)
+
+        // ===== Unggah blob (paralel 3, gagal per-file dilompati) =====
+        hooks.onStage("Mengunggah file")
         val shas = arrayOfNulls<String>(files.size)
-        val done = AtomicInteger(0)
+        val failed = ConcurrentHashMap<String, String>()
         val sem = Semaphore(3)
         coroutineScope {
-            files.mapIndexed { idx, f ->
-                async {
+            files.forEachIndexed { idx, f ->
+                launch {
                     sem.withPermit {
-                        // Baca byte SAAT UPLOAD (bukan saat memilih) — hanya ±3 file di RAM
-                        val bytes = when {
-                            f.file != null -> runCatching { f.file.readBytes() }.getOrElse {
-                                throw GhException("Gagal membaca: ${f.path}")
+                        if (hooks.isCancelled()) return@withPermit
+                        val plan = plans[idx]
+                        try {
+                            val blobSha: String = when {
+                                plan.size == 0L -> EMPTY_BLOB_SHA
+                                plan.lfs -> {
+                                    val oid = plan.sha256 ?: hashAndSize(resolver, f).second
+                                    ctx.lfsUpload(f, plan.size, oid) { sent ->
+                                        hooks.onCurrent(f.path, sent, plan.size)
+                                        if (hooks.isCancelled()) throw IOException("Dibatalkan")
+                                    }
+                                    // Pointer LFS di-commit sebagai blob kecil
+                                    ctx.smallBlob(lfsPointer(oid, plan.size).toByteArray())
+                                }
+                                else -> ctx.blobCreate(f) { sent ->
+                                    hooks.onCurrent(f.path, sent, plan.size)
+                                }
                             }
-                            f.uri != null && resolver != null -> runCatching {
-                                resolver.openInputStream(f.uri)?.use { it.readBytes() }
-                            }.getOrNull() ?: throw GhException("Gagal membaca: ${f.path}")
-                            else -> f.bytes ?: throw GhException("Sumber file tidak ada: ${f.path}")
+                            if (blobSha.isEmpty()) throw GhException("SHA blob kosong dari GitHub")
+                            shas[idx] = blobSha
+                            hooks.onFileDone(f.path, plan.size)
+                        } catch (e: Exception) {
+                            val reason = if (e is kotlinx.coroutines.CancellationException) "Dibatalkan" else humanError(e)
+                            failed[f.path] = reason
+                            hooks.onFileSkipped(f.path, plan.size, reason)
                         }
-                        if (bytes.isEmpty()) throw GhException("File kosong/tidak terbaca: ${f.path}")
-                        val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                        val res = call(
-                            token, "POST", "/repos/$owner/$repo/git/blobs",
-                            JSONObject().put("content", b64).put("encoding", "base64")
-                        ) ?: throw GhException("Gagal membuat blob")
-                        shas[idx] = res.optString("sha")
-                        onProgress("Mengunggah file", done.incrementAndGet(), files.size)
                     }
                 }
-            }.awaitAll()
+            }
         }
+        if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
 
-        onProgress("Membuat tree", 0, 1)
-        val treeArr = JSONArray()
-        files.forEachIndexed { idx, f ->
-            treeArr.put(
-                JSONObject()
-                    .put("path", f.path)
-                    .put("mode", "100644")
-                    .put("type", "blob")
-                    .put("sha", shas[idx] ?: throw GhException("Blob belum lengkap"))
+        val uploadedIdx = files.indices.filter { shas[it] != null }
+        if (uploadedIdx.isEmpty()) {
+            throw GhException(
+                if (failed.isNotEmpty()) "Semua file gagal — contoh: ${failed.entries.first().let { "${it.key}: ${it.value}" }}"
+                else "Tidak ada file yang berhasil diunggah"
             )
         }
-        val treeBody = JSONObject().put("tree", treeArr)
-        if (baseTreeSha != null) treeBody.put("base_tree", baseTreeSha)
-        val tree = call(token, "POST", "/repos/$owner/$repo/git/trees", treeBody)
-            ?: throw GhException("Gagal membuat tree")
 
-        onProgress("Membuat commit", 0, 1)
-        val parents = baseCommitSha?.let { JSONArray().put(it) } ?: JSONArray()
-        val commit = call(
-            token, "POST", "/repos/$owner/$repo/git/commits",
-            JSONObject().put("message", message).put("tree", tree.optString("sha")).put("parents", parents)
-        ) ?: throw GhException("Gagal membuat commit")
-        val commitSha = commit.optString("sha")
+        // ===== Tree + Commit + Update ref (retry saat branch bergerak) =====
+        var attempt = 0
+        var commitShaOut = ""
+        while (true) {
+            attempt++
+            hooks.onStage("Membuat commit")
+            val headSha = try {
+                refSha(token, owner, repo, branch)
+            } catch (e: GhException) {
+                if (e.code == 404 || e.code == 409) null else throw e
+            }
+            val headTree = headSha?.let { commitTreeSha(token, owner, repo, it) }
 
-        onProgress("Memperbarui branch", 0, 1)
-        if (baseCommitSha == null) {
-            call(
-                token, "POST", "/repos/$owner/$repo/git/refs",
-                JSONObject().put("ref", "refs/heads/$branch").put("sha", commitSha)
+            val treeArr = JSONArray()
+            for (i in uploadedIdx) {
+                treeArr.put(
+                    JSONObject()
+                        .put("path", files[i].path)
+                        .put("mode", "100644")
+                        .put("type", "blob")
+                        .put("sha", shas[i])
+                )
+            }
+            val treeBody = JSONObject().put("tree", treeArr)
+            if (headTree != null) treeBody.put("base_tree", headTree)
+            val tree = callRetry(token, "POST", "/repos/$owner/$repo/git/trees", treeBody, hooks, throttle)
+                ?: throw GhException("Gagal membuat tree")
+
+            val parents = headSha?.let { JSONArray().put(it) } ?: JSONArray()
+            val commit = callRetry(
+                token, "POST", "/repos/$owner/$repo/git/commits",
+                JSONObject().put("message", message).put("tree", tree.optString("sha")).put("parents", parents),
+                hooks, throttle
+            ) ?: throw GhException("Gagal membuat commit")
+            val sha = commit.optString("sha")
+
+            hooks.onStage("Memperbarui branch")
+            try {
+                if (headSha == null) {
+                    callRetry(
+                        token, "POST", "/repos/$owner/$repo/git/refs",
+                        JSONObject().put("ref", "refs/heads/$branch").put("sha", sha), hooks, throttle
+                    )
+                } else {
+                    callRetry(
+                        token, "PATCH", "/repos/$owner/$repo/git/refs/heads/${Uri.encode(branch)}",
+                        JSONObject().put("sha", sha).put("force", false), hooks, throttle
+                    )
+                }
+                commitShaOut = sha
+                break
+            } catch (e: GhException) {
+                val msg = e.message ?: ""
+                val moved = e.code == 422 || msg.contains("fast", true)
+                if (moved && attempt < 3) continue // branch bergerak — ulangi dengan parent terbaru
+                throw e
+            }
+        }
+
+        UploadResult(commitShaOut, uploadedIdx.size, failed.map { it.key to it.value }, System.currentTimeMillis() - started)
+    }
+
+    private data class Plan(val f: PickedFile, val size: Long, val sha256: String?, val lfs: Boolean)
+
+    private class Throttle {
+        var minIntervalMs = 0
+        private var lastStart = 0L
+
+        @Synchronized
+        fun gate() {
+            if (minIntervalMs <= 0) return
+            val now = System.currentTimeMillis()
+            val wait = lastStart + minIntervalMs - now
+            if (wait > 0) try { Thread.sleep(wait) } catch (_: InterruptedException) { }
+            lastStart = System.currentTimeMillis()
+        }
+
+        @Synchronized
+        fun slowDown(ms: Int) {
+            if (ms > minIntervalMs) minIntervalMs = ms
+        }
+    }
+
+    private class UpCtx(
+        val token: String,
+        val owner: String,
+        val repo: String,
+        val resolver: android.content.ContentResolver?,
+        val hooks: UploadHooks,
+        val throttle: Throttle
+    )
+
+    /** call() dengan retry: IOException / 5xx / 429 / 403 limit sekunder. */
+    private suspend fun callRetry(
+        token: String, method: String, path: String, body: JSONObject?,
+        hooks: UploadHooks, throttle: Throttle, maxAttempts: Int = 5
+    ): JSONObject? = withContext(Dispatchers.IO) {
+        var last: Exception? = null
+        repeat(maxAttempts) { i ->
+            if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
+            throttle.gate()
+            try {
+                return@withContext call(token, method, path, body)
+            } catch (e: GhException) {
+                last = e
+                val secondary = e.code == 403 && (e.retryAfterMs > 0 || (e.message ?: "").contains("secondary", true))
+                val retryable = e.code in 500..599 || e.code == 429 || secondary
+                if (!retryable || i == maxAttempts - 1) throw e
+                if (e.code == 403 || e.code == 429) throttle.slowDown(700)
+                delay(if (e.retryAfterMs > 0) e.retryAfterMs.coerceAtMost(60_000) else 1000L * (1 shl i))
+            } catch (e: IOException) {
+                last = e
+                if (i == maxAttempts - 1) throw GhException("Koneksi gagal: ${e.message}")
+                delay(1000L * (1 shl i))
+            }
+        }
+        throw last ?: GhException("Gagal")
+    }
+
+    private fun openSource(resolver: android.content.ContentResolver?, f: PickedFile): InputStream = when {
+        f.file != null -> f.file.inputStream()
+        f.uri != null && resolver != null ->
+            resolver.openInputStream(f.uri) ?: throw IOException("Stream tidak tersedia")
+        f.bytes != null -> ByteArrayInputStream(f.bytes)
+        else -> throw IOException("Sumber file tidak ada")
+    }
+
+    /** Satu pass: hitung ukuran + sha256 (dipakai bila metadata ukuran tidak ada / file besar). */
+    private suspend fun hashAndSize(
+        resolver: android.content.ContentResolver?, f: PickedFile
+    ): Pair<Long, String> = withContext(Dispatchers.IO) {
+        val md = MessageDigest.getInstance("SHA-256")
+        var n = 0L
+        openSource(resolver, f).use { ins ->
+            val buf = ByteArray(256 * 1024)
+            while (true) {
+                val r = ins.read(buf)
+                if (r < 0) break
+                if (r > 0) {
+                    md.update(buf, 0, r)
+                    n += r
+                }
+            }
+        }
+        n to md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Body JSON {"content":"<base64>","encoding":"base64"} yang di-ENCODE saat dikirim
+     * (chunk kelipatan 3 byte → hasil base64 identik dengan encode utuh, RAM tetap kecil).
+     */
+    private fun streamedBlobBody(
+        f: PickedFile, resolver: android.content.ContentResolver?,
+        isCancelled: () -> Boolean, onSent: (Long) -> Unit
+    ): RequestBody = object : RequestBody() {
+        override fun contentType() = jsonMedia
+
+        override fun contentLength(): Long {
+            val n = f.size
+            return if (n > 0) B64_PREFIX.length + ((n + 2) / 3) * 4 + B64_SUFFIX.length else -1L
+        }
+
+        override fun writeTo(sink: BufferedSink) {
+            val enc = java.util.Base64.getEncoder()
+            val buf = ByteArray(3 * 32768) // kelipatan 3 → padding benar per chunk
+            sink.writeUtf8(B64_PREFIX)
+            openSource(resolver, f).use { ins ->
+                while (true) {
+                    if (isCancelled()) throw IOException("Dibatalkan")
+                    var read = 0
+                    while (read < buf.size) {
+                        val r = ins.read(buf, read, buf.size - read)
+                        if (r < 0) break
+                        read += r
+                    }
+                    if (read > 0) {
+                        val chunk = if (read < buf.size) buf.copyOf(read) else buf
+                        sink.writeUtf8(enc.encodeToString(chunk))
+                        onSent(read.toLong())
+                    }
+                    if (read < buf.size) break
+                }
+            }
+            sink.writeUtf8(B64_SUFFIX)
+        }
+    }
+
+    /** Body biner mentah streaming (untuk PUT LFS ke storage). */
+    private fun streamedRawBody(
+        f: PickedFile, resolver: android.content.ContentResolver?, size: Long,
+        isCancelled: () -> Boolean, onSent: (Long) -> Unit
+    ): RequestBody = object : RequestBody() {
+        override fun contentType() = "application/octet-stream".toMediaType()
+        override fun contentLength() = if (size > 0) size else -1L
+
+        override fun writeTo(sink: BufferedSink) {
+            val buf = ByteArray(256 * 1024)
+            openSource(resolver, f).use { ins ->
+                while (true) {
+                    if (isCancelled()) throw IOException("Dibatalkan")
+                    val r = ins.read(buf)
+                    if (r < 0) break
+                    if (r > 0) {
+                        sink.write(buf, 0, r)
+                        onSent(r.toLong())
+                    }
+                }
+            }
+        }
+    }
+
+    /** Buat blob via API (JSON base64 streaming) dengan retry + throttle adaptif. */
+    private suspend fun UpCtx.blobCreate(f: PickedFile, onSent: (Long) -> Unit): String =
+        withContext(Dispatchers.IO) {
+            var attempt = 0
+            while (true) {
+                if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
+                throttle.gate()
+                attempt++
+                val body = streamedBlobBody(f, resolver, hooks.isCancelled, onSent)
+                val (code, text, ra) = callStreamed(
+                    "$API/repos/$owner/$repo/git/blobs", "POST", token, body,
+                    mapOf("Accept" to "application/vnd.github+json", "X-GitHub-Api-Version" to "2022-11-28")
+                )
+                if (code in 200..299) {
+                    return@withContext JSONObject(text).optString("sha")
+                }
+                val secondary = code == 403 && (ra > 0 || text.contains("secondary", true))
+                val retryable = code in 500..599 || code == 429 || secondary
+                if (!retryable || attempt >= 5) throw GhException("HTTP $code: ${text.take(160)}", code, ra)
+                if (code == 403 || code == 429) throttle.slowDown(700)
+                delay(if (ra > 0) ra.coerceAtMost(60_000) else 1000L * attempt)
+            }
+            @Suppress("UNREACHABLE_CODE")
+            ""
+        }
+
+    /** Blob kecil (pointer LFS) via JSON biasa + retry. */
+    private suspend fun UpCtx.smallBlob(bytes: ByteArray): String = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("content", Base64.encodeToString(bytes, Base64.NO_WRAP))
+            .put("encoding", "base64")
+        val o = callRetry(token, "POST", "/repos/$owner/$repo/git/blobs", body, hooks, throttle)
+            ?: throw GhException("Gagal membuat blob")
+        o.optString("sha")
+    }
+
+    private fun lfsPointer(oid: String, size: Long): String =
+        "version https://git-lfs.github.com/spec/v1\noid sha256:$oid\nsize $size\n"
+
+    /**
+     * Git LFS: batch → PUT (streaming, progress) → verify.
+     * Auth batch: Basic <token>:x-oauth-basic. Header upload/verify diambil persis dari respons.
+     */
+    private suspend fun UpCtx.lfsUpload(
+        f: PickedFile, size: Long, oid: String, onSent: (Long) -> Unit
+    ) = withContext(Dispatchers.IO) {
+        val basic = Base64.encodeToString("$token:x-oauth-basic".toByteArray(), Base64.NO_WRAP)
+        val batchBody = JSONObject()
+            .put("operation", "upload")
+            .put("transfers", JSONArray().put("basic"))
+            .put("hash_algo", "sha256")
+            .put("objects", JSONArray().put(JSONObject().put("oid", oid).put("size", size)))
+
+        var code = 0
+        var text = ""
+        var attempt = 0
+        while (true) {
+            if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
+            attempt++
+            val res = callStreamed(
+                "https://github.com/$owner/$repo.git/info/lfs/objects/batch", "POST", "",
+                batchBody.toString().toRequestBody(lfsMedia),
+                mapOf("Accept" to "application/vnd.git-lfs+json", "Authorization" to "Basic $basic")
             )
-        } else {
-            call(
-                token, "PATCH", "/repos/$owner/$repo/git/refs/heads/${Uri.encode(branch)}",
-                JSONObject().put("sha", commitSha).put("force", false)
+            code = res.first
+            text = res.second
+            if (code in 200..299) break
+            if ((code in 500..599 || code == 0) && attempt < 3) {
+                delay(1000L * attempt)
+                continue
+            }
+            throw GhException("Git LFS ditolak (HTTP $code): ${text.take(140)}", code)
+        }
+
+        val obj = JSONObject(text).optJSONArray("objects")?.optJSONObject(0)
+            ?: throw GhException("Respons Git LFS tidak valid")
+        obj.optJSONObject("error")?.let { e ->
+            throw GhException("Git LFS: ${e.optString("message", "gagal")}", e.optInt("code"))
+        }
+        val actions = obj.optJSONObject("actions")
+            ?: throw GhException("Git LFS tidak tersedia untuk repository ini (kuota/disabled)")
+
+        // --- PUT ke storage (URL presigned; JANGAN tambah header auth sendiri) ---
+        val up = actions.optJSONObject("upload") ?: throw GhException("URL upload LFS tidak tersedia")
+        val upHeaders = mutableMapOf<String, String>()
+        up.optJSONObject("header")?.let { h ->
+            h.keys().forEach { k -> upHeaders[k] = h.optString(k) }
+        }
+        var putCode = 0
+        var putAttempt = 0
+        while (true) {
+            if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
+            putAttempt++
+            onSent(0)
+            val body = streamedRawBody(f, resolver, size, hooks.isCancelled, onSent)
+            val (c, _) = callStreamed(up.optString("href"), "PUT", "", body, upHeaders)
+            putCode = c
+            if (putCode in 200..299) break
+            if (putAttempt < 2) continue
+            throw GhException("Upload objek LFS gagal (HTTP $putCode)")
+        }
+
+        // --- Verify (opsional; header persis dari respons) ---
+        actions.optJSONObject("verify")?.let { vf ->
+            val vfHeaders = mutableMapOf("Content-Type" to "application/vnd.git-lfs+json")
+            vf.optJSONObject("header")?.let { h ->
+                h.keys().forEach { k -> vfHeaders[k] = h.optString(k) }
+            }
+            callStreamed(
+                vf.optString("href"), "POST", "",
+                JSONObject().put("oid", oid).put("size", size).toString().toRequestBody(lfsMedia),
+                vfHeaders
             )
         }
-        commitSha
     }
 
     // ============ RENAME (1 COMMIT VIA GIT DATA API) ============

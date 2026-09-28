@@ -11,7 +11,9 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -41,6 +43,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -72,7 +75,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /** Batas aman pemindaian folder rekursif */
-const val MAX_SCAN_FILES = 2000
+const val MAX_SCAN_FILES = 10000
 
 /** Apakah aplikasi boleh membaca seluruh penyimpanan (semua file) */
 fun hasAllFilesAccess(ctx: Context): Boolean = when {
@@ -119,7 +122,7 @@ private fun quickRoots(): List<Pair<String, File>> {
 
 /**
  * Pindai folder secara rekursif (BFS) langsung dari filesystem — cepat & lengkap.
- * Mengembalikan (jumlah file, jumlah dilewati, daftar file dengan path relatif).
+ * Mengembalikan (jumlah file, jumlah dilewati, daftar file dengan path relatif terhadap root).
  */
 private fun scanFolderRecursive(root: File): Triple<Int, Int, List<PickedFile>> {
     val out = mutableListOf<PickedFile>()
@@ -148,10 +151,40 @@ private fun scanFolderRecursive(root: File): Triple<Int, Int, List<PickedFile>> 
 }
 
 /**
+ * Petakan path file terpilih RELATIF terhadap folder leluhur bersama mereka.
+ * Contoh: memilih "Download/Proyek/a.txt" saja → di-commit sebagai "a.txt"
+ * (tanpa folder sumber ikut terbawa). Bila beberapa subfolder dipilih,
+ * struktur di bawah leluhur bersama tetap dipertahankan.
+ */
+private fun mapRelative(batch: List<PickedFile>): List<PickedFile> {
+    if (batch.isEmpty()) return batch
+    if (batch.any { it.file == null }) return batch // sumber SAF/byte — path sudah relatif
+    if (batch.size == 1) return listOf(batch[0].copy(path = batch[0].file!!.name))
+    val paths = batch.map { it.file!!.absolutePath }
+    var prefix = paths[0].substringBeforeLast('/', "")
+    for (p in paths) {
+        while (prefix.isNotEmpty() && !p.startsWith("$prefix/")) {
+            prefix = prefix.substringBeforeLast('/', "")
+        }
+        if (prefix.isEmpty()) break
+    }
+    return batch.map { pf ->
+        val abs = pf.file!!.absolutePath
+        val rel = if (prefix.isEmpty()) abs.substringAfterLast('/') else abs.removePrefix("$prefix/").trimStart('/')
+        pf.copy(path = rel.ifEmpty { abs.substringAfterLast('/') })
+    }
+}
+
+/**
  * File Manager bawaan GitPush — menampilkan direktori/file HP apa adanya
  * (termasuk file tersembunyi) lewat akses penyimpanan penuh.
+ * - Ketuk file: pilih/batal. Tekan-lama file: sama (multi-pilih cepat).
+ * - Checkbox/tekan-lama folder: pilih SELURUH isi folder (nama folder ikut sebagai prefix).
+ * - "Pilih semua": semua file di folder yang sedang dibuka.
+ * - "Pilih Folder Ini": seluruh isi folder ini TANPA nama folder (relatif).
  * File dikembalikan sebagai PickedFile(file=…) tanpa membaca byte ke RAM.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FilePickerDialog(
     baseDir: File,
@@ -167,6 +200,7 @@ fun FilePickerDialog(
     var entries by remember { mutableStateOf<List<File>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var selFiles by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
+    var selFolders by remember { mutableStateOf<Map<String, List<PickedFile>>>(emptyMap()) }
     var scanning by remember { mutableStateOf<String?>(null) }
 
     val writeLauncher = rememberLauncherForActivityResult(
@@ -199,31 +233,72 @@ fun FilePickerDialog(
 
     val roots = remember { quickRoots() }
     val selPaths = remember(selFiles) { selFiles.mapNotNull { it.file?.absolutePath }.toSet() }
-    val baseAbs = baseDir.absolutePath.trimEnd('/')
+    val folderFileCount = selFolders.values.sumOf { it.size }
+    val totalSel = selFiles.size + folderFileCount
+    val totalSize = selFiles.sumOf { it.size } + selFolders.values.sumOf { l -> l.sumOf { it.size } }
 
     fun toggle(f: File) {
         val abs = f.absolutePath
         selFiles = if (abs in selPaths) {
             selFiles.filterNot { it.file?.absolutePath == abs }
         } else {
-            val rel = abs.removePrefix(baseAbs).trimStart('/').ifEmpty { f.name }
-            selFiles + PickedFile(rel, f.length(), file = f)
+            selFiles + PickedFile(f.name, f.length(), file = f)
         }
     }
 
-    fun pickWholeFolder() {
+    fun toggleFolder(f: File) {
+        val abs = f.absolutePath
+        if (abs in selFolders.keys) {
+            selFolders = selFolders - abs
+            return
+        }
         if (scanning != null) return
-        scanning = "Memindai \"${cur.name}\"…"
+        scanning = "Memindai \"${f.name}\"…"
         scope.launch {
-            val (n, skipped, files) = withContext(Dispatchers.IO) { scanFolderRecursive(cur) }
+            val (n, skippedN, files) = withContext(Dispatchers.IO) { scanFolderRecursive(f) }
             scanning = null
             if (files.isEmpty()) {
                 toast("Tidak ada file yang bisa dibaca di folder ini")
             } else {
-                val merged = (selFiles + files).distinctBy { it.file?.absolutePath ?: it.path }
-                if (skipped > 0) toast("$skipped file/folder tidak dapat dibaca (dilewati)")
+                val prefix = f.name
+                val entriesMapped = files.map { it.copy(path = "$prefix/${it.path}") }
+                selFolders = selFolders + (abs to entriesMapped)
+                var m = "${files.size} file dari \"$prefix\" dipilih"
+                if (skippedN > 0) m += " • $skippedN dilewati"
+                if (n >= MAX_SCAN_FILES) m += " • dibatasi $MAX_SCAN_FILES file"
+                toast(m)
+            }
+        }
+    }
+
+    fun selectAllHere() {
+        val here = entries.filter { it.isFile }.map { PickedFile(it.name, it.length(), file = it) }
+        selFiles = (selFiles + here).distinctBy { it.file?.absolutePath }
+        val n = here.count { it.file?.absolutePath !in selPaths }
+        if (n > 0) toast("$n file di folder ini dipilih") else toast("Semua file di folder ini sudah dipilih")
+    }
+
+    /** Rakit hasil akhir + petakan relatif, lalu serahkan ke pemanggil. */
+    fun assembleAndClose(extraFolderScan: List<PickedFile>? = null) {
+        val individual = mapRelative(selFiles)
+        val fromFolders = selFolders.values.flatten()
+        val extra = extraFolderScan ?: emptyList()
+        val all = (individual + fromFolders + extra).distinctBy { it.file?.absolutePath ?: it.path }
+        onPicked(all)
+    }
+
+    fun pickWholeFolder() {
+        if (scanning != null) return
+        scanning = "Memindai \"${cur.name.ifEmpty { "Penyimpanan" }}\"…"
+        scope.launch {
+            val (n, skippedN, files) = withContext(Dispatchers.IO) { scanFolderRecursive(cur) }
+            scanning = null
+            if (files.isEmpty() && totalSel == 0) {
+                toast("Tidak ada file yang bisa dibaca di folder ini")
+            } else {
+                if (skippedN > 0) toast("$skippedN file/folder tidak dapat dibaca (dilewati)")
                 if (n >= MAX_SCAN_FILES) toast("Dibatasi maksimal $MAX_SCAN_FILES file")
-                onPicked(merged)
+                assembleAndClose(files)
             }
         }
     }
@@ -366,9 +441,13 @@ fun FilePickerDialog(
                     else -> LazyColumn(Modifier.weight(1f)) {
                         items(entries, key = { it.absolutePath }) { f ->
                             val isDir = f.isDirectory
+                            val folderChecked = isDir && f.absolutePath in selFolders.keys
                             Row(
                                 Modifier.fillMaxWidth()
-                                    .clickable { if (isDir) cur = f else toggle(f) }
+                                    .combinedClickable(
+                                        onClick = { if (isDir) cur = f else toggle(f) },
+                                        onLongClick = { if (isDir) toggleFolder(f) else toggle(f) }
+                                    )
                                     .padding(horizontal = 14.dp, vertical = 9.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -387,17 +466,16 @@ fun FilePickerDialog(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        if (isDir) "Folder" else formatBytes(f.length()),
+                                        if (isDir) "Folder — tekan-lama untuk pilih isinya"
+                                        else formatBytes(f.length()),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontSize = 10.5.sp
                                     )
                                 }
-                                if (!isDir) {
-                                    Checkbox(
-                                        checked = f.absolutePath in selPaths,
-                                        onCheckedChange = { toggle(f) }
-                                    )
-                                }
+                                Checkbox(
+                                    checked = if (isDir) folderChecked else f.absolutePath in selPaths,
+                                    onCheckedChange = { if (isDir) toggleFolder(f) else toggle(f) }
+                                )
                             }
                         }
                     }
@@ -422,31 +500,57 @@ fun FilePickerDialog(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        "${selFiles.size} file dipilih",
+                                        "$totalSel file dipilih",
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 12.sp
                                     )
                                     Text(
-                                        formatBytes(selFiles.sumOf { it.size }),
+                                        formatBytes(totalSize),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontSize = 10.sp
                                     )
                                 }
                                 TextButton(
-                                    onClick = { pickWholeFolder() },
-                                    enabled = scanning == null
+                                    onClick = {
+                                        selFiles = emptyList()
+                                        selFolders = emptyMap()
+                                    },
+                                    enabled = totalSel > 0
                                 ) {
-                                    Text("Pilih Folder Ini", fontSize = 12.sp)
-                                }
-                                Spacer(Modifier.width(6.dp))
-                                Button(
-                                    onClick = { onPicked(selFiles) },
-                                    enabled = selFiles.isNotEmpty() && scanning == null,
-                                    colors = ButtonDefaults.buttonColors(containerColor = GreenDeep)
-                                ) {
-                                    Text("Tambahkan", fontSize = 13.sp)
+                                    Text("Bersihkan", fontSize = 12.sp)
                                 }
                             }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { selectAllHere() },
+                                    enabled = scanning == null && entries.any { it.isFile },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Pilih semua", fontSize = 12.sp, maxLines = 1)
+                                }
+                                OutlinedButton(
+                                    onClick = { pickWholeFolder() },
+                                    enabled = scanning == null,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Pilih Folder Ini", fontSize = 12.sp, maxLines = 1)
+                                }
+                                Button(
+                                    onClick = { assembleAndClose() },
+                                    enabled = totalSel > 0 && scanning == null,
+                                    colors = ButtonDefaults.buttonColors(containerColor = GreenDeep),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text("Tambahkan", fontSize = 13.sp, maxLines = 1)
+                                }
+                            }
+                            Text(
+                                "Path di repository = relatif terhadap folder asal file (folder HP tidak ikut ter-upload)",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 9.5.sp,
+                                lineHeight = 12.sp,
+                                modifier = Modifier.padding(top = 5.dp)
+                            )
                         }
                     }
                 }

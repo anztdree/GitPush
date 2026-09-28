@@ -72,4 +72,4 @@ server.log
 /native/app/build/
 /native/local.properties
 /native/.idea/
-/native/build.log
+/native/build.logtool-results/
