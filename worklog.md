@@ -149,3 +149,28 @@ Stage Summary:
 - GitPush kini APLIKASI ANDROID NATIVE SEJATI (Kotlin + Jetpack Compose, tanpa webview/wrapper) dengan semua fitur web + yang diminta user: Buat Repository, tab Pengaturan berisi, layout responsif (grid adaptif + max-width).
 - Artefak: native/ (proyek Kotlin lengkap 16 file + gradle config), public/gitpush.apk (native v2.0, 2,9 MB), web copy v2.0, apk-build/apk-export tetap lokal (dihapus dari repo).
 - Catatan: APK release di-sign debug key (sideload pribadi OK); runtime testing di device nyata oleh user.
+
+---
+Task ID: 8
+Agent: Z.ai Code (main)
+Task: Hapus total versi 1.0 lama (Capacitor) & jadikan versi native 2.0 → 1.0 (permintaan user: "Hapus sepenuhnya versi 1.0. dan versi 2.0 sepenuhnya jadi versi 1.0. update Repository github Saya juga")
+
+Work Log:
+- Re-version native: versionName "2.0" → "1.0" di native/app/build.gradle.kts (versionCode tetap 2 agar bisa install-over APK lama; signature debug sama).
+- Teks in-app diperbarui: SettingsScreen.kt "GitPush v1.0 — Native Android", ProfileScreen.kt badge "v1.0 NATIVE".
+- Web copy v2.0 → v1.0 (4 titik): AuthScreen (link unduh APK), ProfileView (kartu APK, tombol "Unduh GitPush v1.0 (APK)", Tentang).
+- APK native v1.0 di-build ulang: ./gradlew assembleRelease (JDK 21, daemonizer double-fork, BUILD SUCCESSFUL 3m46s) → aapt verified: com.gitpush.app versionName='1.0', label 'GitPush', hanya izin INTERNET; size 2.948.565 bytes → menggantikan public/gitpush.apk.
+- Sisa wrapper Capacitor dihapus total dari lokal: rm -rf apk-build/ apk-export/ (± 1,2 GB dibebaskan).
+- GitHub: Release v1.0 lama (Capacitor, id 398203176) dan Release v2.0 (id 398277269) di-DELETE (204) + tag v1.0 & v2.0 dihapus (204) — daftar release/tags jadi kosong.
+- Scan secret ulang sebelum push: tidak ada token asli (hanya placeholder "ghp_••••" di AuthScreen + catatan worklog); native build outputs ter-ignore.
+- History dibuat ulang lagi via orphan commit tunggal 6e849c3 "GitPush v1.0 — Native Android (Kotlin + Jetpack Compose)" (158 file) → force push main; blob APK Capacitor & source wrapper tidak pernah masuk history remote baru.
+- Release v1.0 baru dibuat (id 398333638, tag v1.0 → main) dengan aset GitPush-v1.0.apk (2.948.565 bytes, state uploaded) — URL unduhan sama persis seperti sebelumnya: /releases/download/v1.0/GitPush-v1.0.apk.
+- Deskripsi repo di-update via PATCH: "GitPush — Aplikasi Android murni native (Kotlin + Jetpack Compose)..." + homepage ke halaman release.
+- Verifikasi Agent Browser (390x844, mode demo): login menampilkan "Unduh APK Android native v1.0", Profil menampilkan "GitPush v1.0 — APK Android murni native", "Unduh GitPush v1.0 (APK)", Tentang "GitPush v1.0 (Native Android)"; zero teks v2.0 tersisa; lint exit 0; dev.log bersih; / 200, /gitpush.apk 200.
+- Verifikasi remote: releases hanya v1.0 + aset GitPush-v1.0.apk (unduh 200, content-length cocok); apk-build → 404; aset lama GitPush-v2.0-native.apk → 404; native/app/build.gradle.kts, public/gitpush.apk, worklog.md → 200.
+
+Stage Summary:
+- Versi 1.0 (Capacitor/wrapper) dan versi 2.0 hilang sepenuhnya dari GitHub (release, tag, history, source, APK) dan dari lokal.
+- Satu-satunya versi yang ada sekarang: GitPush v1.0 = aplikasi Android murni native (Kotlin + Jetpack Compose, 2,9 MB) dengan semua fitur: bulk upload 1 commit, buat repository, edit/rename/hapus/buat file, download file/folder/repo, notifikasi, Pengaturan berisi, layout responsif.
+- Repo backup: github.com/anztdree/GitPush — main = history bersih (commit kode + commit worklog), Release v1.0 + GitPush-v1.0.apk.
+- Catatan: versionCode internal tetap 2 (instalasi di atas APK lama langsung berhasil); versionName yang terlihat user = 1.0.
