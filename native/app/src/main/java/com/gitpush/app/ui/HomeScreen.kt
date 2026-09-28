@@ -1,8 +1,10 @@
 package com.gitpush.app.ui
 
 import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +31,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -49,11 +52,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gitpush.app.data.GhException
 import com.gitpush.app.data.GitHubApi
 import com.gitpush.app.data.GhRepo
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +77,8 @@ fun HomeScreen() {
     var showCreate by remember { mutableStateOf(false) }
     // Pemakaian riil per repository (termasuk objek Git LFS): fullName → byte (-1 = gagal hitung)
     var usageMap by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    // Repo yang sedang diminta dihapus (tekan lama kartu)
+    var deleteTarget by remember { mutableStateOf<GhRepo?>(null) }
 
     val computeUsages: (Boolean) -> Unit = { force ->
         val repos = Store.repos.value
@@ -173,7 +180,9 @@ fun HomeScreen() {
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filtered, key = { it.id }) { repo -> RepoCard(repo, usageMap[repo.fullName]) }
+                    items(filtered, key = { it.id }) { repo ->
+                        RepoCard(repo, usageMap[repo.fullName], onLongClick = { deleteTarget = repo })
+                    }
                 }
             }
         }
@@ -182,27 +191,39 @@ fun HomeScreen() {
     if (showCreate) {
         CreateRepoDialog(onDismiss = { showCreate = false }, onCreated = { showCreate = false })
     }
+
+    deleteTarget?.let { repo ->
+        DeleteRepoDialog(
+            owner = repo.owner,
+            name = repo.name,
+            onDismiss = { deleteTarget = null },
+            onDeleted = { deleteTarget = null }
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RepoCard(repo: GhRepo, usage: Long?) {
+private fun RepoCard(repo: GhRepo, usage: Long?, onLongClick: () -> Unit) {
     val shape = RoundedCornerShape(14.dp)
     Card(
-        onClick = {
-            Store.push(
-                Screen.Repo(
-                    owner = repo.owner,
-                    name = repo.name,
-                    fullName = repo.fullName,
-                    defaultBranch = repo.defaultBranch,
-                    isPrivate = repo.isPrivate
-                )
-            )
-        },
         shape = shape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline, shape)
+        modifier = Modifier.fillMaxWidth().combinedClickable(
+            onClick = {
+                Store.push(
+                    Screen.Repo(
+                        owner = repo.owner,
+                        name = repo.name,
+                        fullName = repo.fullName,
+                        defaultBranch = repo.defaultBranch,
+                        isPrivate = repo.isPrivate
+                    )
+                )
+            },
+            onLongClick = onLongClick
+        ).border(1.dp, MaterialTheme.colorScheme.outline, shape)
     ) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -357,6 +378,89 @@ private fun CreateRepoDialog(onDismiss: () -> Unit, onCreated: () -> Unit) {
                     )
                 } else {
                     Text("Buat")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Batal") }
+        }
+    )
+}
+
+/**
+ * Dialog hapus repository PERMANEN — wajib mengetik nama repo sebagai konfirmasi.
+ * Dipakai di Beranda (tekan lama kartu) dan di menu kebab layar repository.
+ */
+@Composable
+fun DeleteRepoDialog(owner: String, name: String, onDismiss: () -> Unit, onDeleted: () -> Unit) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var confirm by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Hapus repository?", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        text = {
+            Column {
+                Text(
+                    "$owner/$name akan dihapus PERMANEN bersama semua file, commit, dan riwayatnya. Tindakan ini tidak bisa dibatalkan.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = confirm,
+                    onValueChange = { confirm = it },
+                    label = { Text("Ketik \"$name\" untuk konfirmasi") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (error != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    busy = true
+                    error = null
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                GitHubApi.deleteRepo(Store.token.value, owner, name)
+                            }
+                            GitHubApi.invalidateUsage(owner, name)
+                            Store.repos.value = Store.repos.value.filter { it.fullName != "$owner/$name" }
+                            Store.log("delete", "Hapus repository $name", "$owner/$name")
+                            Toast.makeText(ctx, "Repository $name dihapus permanen ✓", Toast.LENGTH_LONG).show()
+                            onDeleted()
+                        } catch (e: Exception) {
+                            error = when {
+                                (e as? GhException)?.code == 403 ->
+                                    "Token ditolak (403) — PAT klasik memerlukan scope delete_repo untuk menghapus repository."
+                                else -> GitHubApi.humanError(e)
+                            }
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+                enabled = confirm.trim() == name && !busy,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = RedDanger,
+                    contentColor = Color.White
+                )
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Hapus permanen")
                 }
             }
         },

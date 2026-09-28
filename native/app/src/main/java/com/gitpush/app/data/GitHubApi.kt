@@ -208,6 +208,14 @@ object GitHubApi {
             parseRepo(o)
         }
 
+    /** Hapus repository PERMANEN — semua file, commit, dan riwayat ikut hilang (tak bisa dibatalkan).
+     *  PAT klasik memerlukan scope delete_repo; sukses = 204 (respons kosong ditangani call()). */
+    suspend fun deleteRepo(token: String, owner: String, name: String): Unit =
+        withContext(Dispatchers.IO) {
+            call(token, "DELETE", "/repos/$owner/$name")
+            Unit
+        }
+
     // ============ PEMAKAIAN RIIL REPOSITORY (termasuk objek Git LFS) ============
     // Field "size" pada API GitHub TIDAK termasuk isi Git LFS — repo berisi file besar
     // via LFS bisa tercatat 10 MB padahal isinya ratusan MB. Fungsi di bawah menghitung

@@ -91,6 +91,8 @@ fun RepoScreen(s: Screen.Repo) {
     var zipProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var renameTarget by remember { mutableStateOf<GhNode?>(null) }
     var deleteTarget by remember { mutableStateOf<GhNode?>(null) }
+    var showRepoMenu by remember { mutableStateOf(false) }
+    var deleteRepoDialog by remember { mutableStateOf(false) }
     var repoInfo by remember { mutableStateOf<GhRepo?>(null) }
     var dirSizes by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var dirCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
@@ -320,6 +322,26 @@ fun RepoScreen(s: Screen.Repo) {
                 loadRepoInfo()
             }) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Segarkan")
+            }
+            IconButton(onClick = { showRepoMenu = true }) {
+                Icon(Icons.Filled.MoreVert, contentDescription = "Menu repository")
+            }
+            DropdownMenu(expanded = showRepoMenu, onDismissRequest = { showRepoMenu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Hapus repository", color = RedDanger) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = null,
+                            tint = RedDanger,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    onClick = {
+                        showRepoMenu = false
+                        deleteRepoDialog = true
+                    }
+                )
             }
         }
 
@@ -601,6 +623,18 @@ fun RepoScreen(s: Screen.Repo) {
                         toast("Gagal: ${GitHubApi.humanError(e)}")
                     }
                 }
+            }
+        )
+    }
+
+    if (deleteRepoDialog) {
+        DeleteRepoDialog(
+            owner = s.owner,
+            name = s.name,
+            onDismiss = { deleteRepoDialog = false },
+            onDeleted = {
+                deleteRepoDialog = false
+                Store.pop() // repo sudah tidak ada — kembali ke Beranda
             }
         )
     }

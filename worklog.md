@@ -316,3 +316,20 @@ Stage Summary:
 - Back di dalam repo kini SELALU naik satu folder — bahkan saat daftar folder masih dimuat; di root back keluar layar. Navigasi antar folder instan berkat cache folder.
 - Semua tampilan ukuran (kartu Beranda, total Beranda, kuota dalam repo, kuota tab Unggah) konsisten memakai pemakaian riil termasuk Git LFS — tidak ada lagi kontradiksi 10 MB vs 351 MB.
 - Artefak: GitPush-v1.2.apk (versionCode 7) → Release v1.2.
+
+---
+Task ID: 14
+Agent: Z.ai Code (main)
+Task: Fitur hapus repository (feedback user: "setelah saya cari ternyata hapus Repository belum ada")
+
+Work Log:
+- Uji scope PAT via curl: buat repo sementara tmp-scope-test-831 → DELETE /repos/… → HTTP 204 → PAT klasik user TERBUKTI punya scope delete_repo (repo sementara ikut terhapus, tidak ada sisa).
+- GitHubApi.kt: deleteRepo() — DELETE /repos/{owner}/{repo} via call() (204 body kosong sudah ditangani); error kode ikut dioper ke GhException.
+- HomeScreen.kt: composable publik DeleteRepoDialog(owner, name) — peringatan permanen + konfirmasi WAJIB ketik nama repo (tombol "Hapus permanen" merah RedDanger, disabled sampai nama cocok); error 403 ditampilkan dengan penjelasan scope delete_repo; sukses → invalidateUsage + buang dari Store.repos + riwayat + toast. Kartu repo kini combinedClickable: klik = buka, TEKAN LAMA = dialog hapus.
+- RepoScreen.kt: menu kebab (⋮) baru di header layar repo berisi "Hapus repository" (merah); setelah sukses Store.pop() kembali ke Beranda (repo sudah tidak ada).
+- Versi: versionCode 7 → 8, versionName 1.2 → 1.3; Settings "GitPush v1.3", Profile "v1.3 NATIVE".
+- Build: assembleRelease BUILD SUCCESSFUL 3m19s; aapt: versionCode 8, versionName 1.3; APK → GitPush-v1.3.apk.
+
+Stage Summary:
+- Hapus repository kini tersedia di dua tempat: tekan-lama kartu di Beranda, dan menu kebab di layar repository — sama-sama lewat dialog konfirmasi ketik-nama (anti salah hapus).
+- Teruji end-to-end di level API dengan PAT user (204). Artefak: GitPush-v1.3.apk (versionCode 8) → Release v1.3.
