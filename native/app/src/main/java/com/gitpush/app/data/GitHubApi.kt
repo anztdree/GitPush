@@ -232,11 +232,71 @@ object GitHubApi {
     private val usageCache = HashMap<String, Pair<Long, Long>>() // kunci → (byte, waktu dihitung)
     private const val USAGE_TTL_MS = 5L * 60 * 1000
 
-    /** Buang cache pemakaian repository — panggil setelah upload/rename/hapus/commit. */
+    /** Buang cache pemakaian repository — panggil setelah upload/rename/hapus/commit.
+     *  Sekalian buang cache "commit terakhir per file" agar status update terakhir ikut segar. */
     fun invalidateUsage(owner: String, repo: String) {
         synchronized(usageCache) {
             val prefix = "$owner/$repo@"
             usageCache.keys.removeAll { it.startsWith(prefix) }
+        }
+        invalidateLastCommits(owner, repo)
+    }
+
+    // ============ COMMIT TERAKHIR PER FILE/FOLDER (ala website GitHub) ============
+
+    private val lastCommitCache = HashMap<String, Pair<Long, GhCommit>>()
+    private const val LAST_COMMIT_TTL_MS = 10L * 60 * 1000
+
+    /** Buang cache commit-terakhir-per-path (dipanggil otomatis oleh invalidateUsage). */
+    fun invalidateLastCommits(owner: String, repo: String) {
+        synchronized(lastCommitCache) {
+            val prefix = "$owner/$repo@"
+            lastCommitCache.keys.removeAll { it.startsWith(prefix) }
+        }
+    }
+
+    /**
+     * Commit terakhir untuk tiap path (file/folder) di daftar — persis seperti baris
+     * "pesan commit • waktu" pada daftar file di website GitHub.
+     * Dikerjakan paralel (maks 5 sekaligus, batas 100 path) dan HASIL DIKIRIM PROGRESIF
+     * lewat onResult begitu tiap path selesai — daftar tidak perlu menunggu semuanya.
+     * Cache 10 menit per repo@branch:path. Gagal per path diabaikan diam-diam
+     * (baris tetap tampil tanpa info commit).
+     */
+    suspend fun fetchLastCommits(
+        token: String, owner: String, repo: String, branch: String, paths: List<String>,
+        onResult: (path: String, info: GhCommit) -> Unit
+    ): Unit = coroutineScope {
+        val sem = Semaphore(5)
+        paths.take(100).forEach { p ->
+            launch {
+                sem.withPermit {
+                    val key = "$owner/$repo@$branch:$p"
+                    val cached = synchronized(lastCommitCache) { lastCommitCache[key] }
+                    if (cached != null && System.currentTimeMillis() - cached.first < LAST_COMMIT_TTL_MS) {
+                        onResult(p, cached.second)
+                        return@withPermit
+                    }
+                    runCatching {
+                        val arr = callArray(
+                            token, "GET",
+                            "/repos/$owner/$repo/commits?sha=${Uri.encode(branch)}&path=${Uri.encode(p)}&per_page=1"
+                        )
+                        if (arr.length() == 0) return@withPermit
+                        val o = arr.getJSONObject(0)
+                        val commitObj = o.optJSONObject("commit")
+                        val info = GhCommit(
+                            sha = o.optString("sha"),
+                            message = commitObj?.optString("message")?.substringBefore('\n') ?: "",
+                            author = commitObj?.optJSONObject("author")?.optString("name") ?: "",
+                            avatarUrl = if (o.isNull("author")) null else o.optJSONObject("author")?.optString("avatar_url"),
+                            date = commitObj?.optJSONObject("author")?.optString("date") ?: ""
+                        )
+                        synchronized(lastCommitCache) { lastCommitCache[key] = System.currentTimeMillis() to info }
+                        onResult(p, info)
+                    }
+                }
+            }
         }
     }
 

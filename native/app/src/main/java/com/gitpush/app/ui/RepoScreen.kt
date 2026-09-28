@@ -58,6 +58,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -107,6 +108,8 @@ fun RepoScreen(s: Screen.Repo) {
     var dirSizes by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var dirCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var realUsage by remember { mutableStateOf<Long?>(null) }
+    // Commit terakhir per file/folder (ala website GitHub) — terisi progresif per baris
+    val lastCommits = remember { mutableStateMapOf<String, GhCommit>() }
 
     val loadRepoInfo: () -> Unit = {
         scope.launch {
@@ -168,6 +171,17 @@ fun RepoScreen(s: Screen.Repo) {
                 }
             }.getOrNull()
         }
+    }
+
+    LaunchedEffect(nodes, branch) {
+        // Status "commit terakhir" per baris file/folder — seperti website GitHub.
+        // Daftar langsung tampil; baris info commit menyusul satu per satu (progresif).
+        val list = nodes ?: return@LaunchedEffect
+        lastCommits.clear()
+        if (list.isEmpty()) return@LaunchedEffect
+        GitHubApi.fetchLastCommits(
+            Store.token.value, s.owner, s.name, branch, list.map { it.path }
+        ) { p, info -> lastCommits[p] = info }
     }
 
     LaunchedEffect(s.fullName) {
@@ -485,6 +499,7 @@ fun RepoScreen(s: Screen.Repo) {
                                 node = node,
                                 dirBytes = if (node.type == "dir") dirSizes[node.path] else null,
                                 dirItems = if (node.type == "dir") dirCounts[node.path] else null,
+                                lastCommit = lastCommits[node.path],
                                 onClick = {
                                     if (node.type == "dir") openDir(node.path)
                                     else Store.push(
@@ -732,6 +747,7 @@ private fun FileRow(
     node: GhNode,
     dirBytes: Long? = null,
     dirItems: Int? = null,
+    lastCommit: GhCommit? = null,
     onClick: () -> Unit,
     onDetail: () -> Unit,
     onDownloadFile: () -> Unit,
@@ -762,6 +778,31 @@ private fun FileRow(
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
+                    // Status update terakhir ala website: pesan commit + waktu relatif
+                    lastCommit?.let { lc ->
+                        Spacer(Modifier.height(1.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.History,
+                                contentDescription = null,
+                                modifier = Modifier.size(11.dp),
+                                tint = GreenPrimary.copy(alpha = 0.75f)
+                            )
+                            Spacer(Modifier.size(4.dp))
+                            Text(
+                                buildString {
+                                    if (lc.message.isNotBlank()) append(lc.message)
+                                    val t = timeAgo(lc.date)
+                                    if (isNotEmpty() && t != "-") append("  •  ")
+                                    if (t != "-") append(t)
+                                },
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                     Text(
                         when {
                             node.type == "dir" -> buildString {

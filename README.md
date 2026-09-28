@@ -3,39 +3,51 @@
 
 # GitPush 📲
 
-**Aplikasi Android murni native (Kotlin + Jetpack Compose) untuk mengelola repository GitHub dari HP** — lengkap dengan fitur andalan yang tidak dimiliki aplikasi GitHub resmi: **upload massal banyak file & folder dalam satu commit**.
+**Aplikasi Android murni native (Kotlin + Jetpack Compose) — file manager + penyimpanan awan di atas repository GitHub.** Pengganti aplikasi GitHub resmi dengan identitas utama: **file manager yang bisa mengelola file repository layaknya penyimpanan awan** — buka, unduh, pindah, rename, edit, hapus, ZIP, plus **upload massal banyak file & folder dalam 1 commit**.
 
 <p>
-  <img src="https://img.shields.io/badge/version-1.1-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-1.7-blue" alt="version" />
   <img src="https://img.shields.io/badge/platform-Android%209%2B-green" alt="platform" />
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-orange" alt="compose" />
   <img src="https://img.shields.io/badge/ukuran%20APK-~3%20MB-success" alt="size" />
 </p>
 
-> Tampilan modern ala aplikasi GitHub resmi + **bulk upload** ala GitHub Desktop/web. Tanpa WebView, tanpa wrapper — 100% Kotlin.
+> 100% native — tanpa WebView, tanpa wrapper. Tampilan modern, semua proses tampil progresnya.
 
 ---
 
 ## ⬇️ Unduh APK
 
-Unduh langsung dari halaman Release:
+**APK selalu ada di halaman [Releases](https://github.com/anztdree/GitPush/releases/latest)** (panel kanan halaman repo → bagian *Releases*):
 
-**[GitPush-v1.1.apk → Releases](https://github.com/anztdree/GitPush/releases/latest)**
+**[⬇️ GitPush-v1.7.apk — Releases](https://github.com/anztdree/GitPush/releases/latest)**
 
-1. Unduh `GitPush-v1.1.apk`
+1. Buka [halaman Releases](https://github.com/anztdree/GitPush/releases/latest) → unduh `GitPush-v1.7.apk`
 2. Buka file → izinkan *Install dari sumber tidak dikenal*
 3. Login menggunakan **Personal Access Token (PAT)** GitHub (scope `repo`)
+
+> 📌 Catatan: APK **tidak** diletakkan sebagai file biasa di daftar file repo — semua versi (v1.0 s.d. v1.7) tersimpan rapi di tab **Releases** agar repo tetap ramping.
+
+## 📁 Struktur Repository (kode sumber lengkap tersedia)
+
+| Lokasi | Isi |
+|---|---|
+| `native/` | **Kode sumber Android lengkap** — proyek Gradle siap build (Kotlin + Jetpack Compose, package `com.gitpush.app`) |
+| `native/app/src/main/java/com/gitpush/app/` | Seluruh kode aplikasi: `MainActivity.kt`, `ui/` (layar & komponen), `data/` (GitHub API, model, store) |
+| `brand/` | Aset logo & ikon aplikasi |
+| `scripts/` | Skrip utilitas (generator ikon Android, dsb.) |
 
 ## ✨ Fitur
 
 | Kategori | Detail |
 |---|---|
-| **Upload massal** | Pilih banyak file dan/atau seluruh folder → semua masuk **1 commit** (Git Data API: blobs → tree → commit → update ref) |
-| **Tanpa batas praktis** | Ratusan file per commit dengan throttle adaptif; file **>95 MB otomatis lewat Git LFS**; progres per-byte per tahap (persiapan → unggah → commit → selesai) dengan kecepatan + ETA + batal kapan saja |
-| **File Manager bawaan** | Browser penyimpanan internal full akses (bukan SAF terbatas) — pilih file per-checklist, pilih folder, multi-pilih tekan-lama, path relatif rapi |
-| **Kelola file** | Lihat (teks/gambar/markdown/biner), edit, buat, rename, hapus file |
-| **Download** | File tunggal, folder (ZIP), atau seluruh repository (ZIP) — tersimpan di `Download/GitPush` |
-| **Repository** | Buat repository baru, browse + breadcrumb + ganti branch, riwayat commit |
+| **File manager repository** | Browse folder + breadcrumb, **status update terakhir per file/folder ala website GitHub** (pesan commit • waktu relatif), ikon berwarna per tipe file, ukuran riil termasuk objek LFS |
+| **Kelola file** | Buka (teks/gambar/markdown/biner), **edit**, buat, **rename**, **pindah file/folder**, hapus — semua lewat menu baris |
+| **Upload massal** | Banyak file dan/atau seluruh folder → **1 commit** (blobs → tree → commit → update ref); file **>95 MB otomatis via Git LFS** |
+| **Progres semua proses** | Upload (per-byte, kecepatan + ETA, batal kapan saja), unduh, ZIP, pindah, rename, hapus — **semua tampil dialog progres** |
+| **Download** | File tunggal (file besar streaming tanpa 0 KB), folder (ZIP), atau seluruh repository (ZIP, objek LFS diisi konten asli) → tersimpan di `Download/GitPush` |
+| **Riwayat & README** | Tombol riwayat commit (layar penuh) + tombol README dengan render markdown |
+| **Repository** | Buat repository baru, hapus repository (konfirmasi ketik nama), ganti branch, kuota riil 2 GB (termasuk LFS) |
 | **Notifikasi** | Notifikasi GitHub dengan filter & tandai dibaca |
 | **Lainnya** | Tema gelap/terang, responsif (HP & tablet), pencarian repo, pesan commit default bisa diatur |
 
@@ -60,39 +72,19 @@ Ikon launcher digenerate dari sumber `brand/icon-raw.png`:
 node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 ```
 
-## 🗂️ Struktur Proyek
+## 📜 Versi
 
-```
-├── native/                          # 📱 Aplikasi Android native (SUMBER UTAMA)
-│   └── app/src/main/
-│       ├── java/com/gitpush/app/
-│       │   ├── data/                #   GitHubApi (OkHttp), Models, Prefs
-│       │   └── ui/                  #   MainActivity + 5 tab: Home, Repo,
-│       │                            #   Upload, Notifikasi, Profil
-│       │                            #   + FileBrowser, FileScreens, Settings
-│       ├── res/                     #   ikon launcher semua density + tema
-│       └── AndroidManifest.xml
-├── brand/                           # sumber ikon (icon-raw.png)
-├── scripts/                         # generator ikon launcher Android
-├── worklog.md                       # jurnal pengembangan
-└── README.md
-```
+| Versi | Sorotan |
+|---|---|
+| **v1.7** | Status update terakhir per file/folder ala website GitHub |
+| **v1.6** | Fix upload file besar (LFS) — respons API terpotong 800 karakter |
+| **v1.5** | Dialog progres untuk semua proses + riwayat commit & README jadi tombol + pindah file/folder |
+| **v1.4** | Fix unduhan 0 KB (streaming blob mentah) |
+| **v1.3** | Hapus repository |
+| **v1.2** | Navigasi folder & ukuran file riil |
+| **v1.1** | Folder manager & kuota 2 GB |
+| **v1.0** | Rilis pertama — upload massal 1 commit |
 
-## 🛠️ Teknologi
+---
 
-- **Kotlin** + **Jetpack Compose** (Material 3) — UI deklaratif, gelap/terang, responsif
-- **OkHttp** — REST API GitHub v3: Contents, Git Data (blobs/trees/commits), Notifications, Zipball
-- **Git LFS API** — file >95 MB otomatis via LFS (streaming sha256, hemat RAM)
-- `java.io.File` + SAF + `MANAGE_EXTERNAL_STORAGE` — file manager bawaan full akses
-- Min SDK 29 (Android 10) · Target SDK 36 · APK ±3 MB (R8 minified)
-
-## 📝 Catatan
-
-- Login hanya menggunakan **PAT** (scope `repo` minimal). Token disimpan lokal di perangkat (SharedPreferences) dan hanya dikirim ke api.github.com.
-- File >95 MB diunggah otomatis melalui **Git LFS** (butuh LFS aktif di repository tujuan; GitHub memberi kuota LFS tersendiri).
-- Batas mutlak GitHub: file >100 MB tidak mungkin via Git Data API — GitPush otomatis memakai LFS untuk melewatinya.
-- APK di-release di-sign dengan debug key — cocok untuk pemakaian pribadi; untuk Play Store gunakan signing key sendiri.
-
-## 📄 Lisensi
-
-Proyek pribadi — bebas digunakan dan dimodifikasi untuk keperluan sendiri.
+Dibuat dengan Kotlin + Jetpack Compose · GitHub REST API + Git Data API + Git LFS
