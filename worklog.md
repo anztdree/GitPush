@@ -353,3 +353,29 @@ Stage Summary:
 - Unduhan file > 1 MB tidak lagi 0 KB — di-stream mentah byte-per-byte dari Git Blobs API (teruji identik dengan asli).
 - Unduhan ZIP juga streaming (RAM hemat), LFS tetap konten asli.
 - Artefak: GitPush-v1.4.apk (versionCode 9) → Release v1.4.
+
+---
+Task ID: 16
+Agent: Z.ai Code (main)
+Task: Paket feedback user — (1) dialog progres untuk SEMUA proses, (2) riwayat commit jadi tombol, (3) tombol pindah file/folder, (4) README jadi tombol + render markdown, (5) upgrade visual + ikon warna per tipe file
+
+Work Log:
+- AppStore.kt: OperationState (title/detail/done/total/unit/running) + Store.showOp/opDetail/opProgress/opStep/hideOp — dialog progres global satu sumber kebenaran.
+- Common.kt: FilePalette (10 warna kategori), fileInfo(name,isDir) pemetaan ekstensi → ikon+warna, FileTypeBadge (ikon dalam kotak bulat alpha 15%), OperationOverlay (dialog non-cancelable: bar determinate + "X / Y • N%" untuk byte/item, bar indeterminate untuk tahapan); inlineStyled diperluas: *italic*, [link](url) berwarna, `kode`, **tebal**.
+- MainActivity.kt: OperationOverlay() dipasang di Box MainScaffold — tampil di atas layar mana pun.
+- GitHubApi.kt: streamBlobRaw/streamLfsContent menerima onBytes (loop manual 64 KB, progres byte nyata); downloadFile menerima onStage + onProgress (LFS: total dari pointer; blob besar: total dari meta.size); zipBlobs onProgress → (done,total,currentPath); downloadFolderZip/downloadRepoZip ikut; renameFile/renameFolder/deleteFolder menerima onStage ("Menganalisis tree…", "Menyiapkan N file…", ulang bila branch bergerak).
+- RepoScreen.kt: SEMUA aksi kini lewat overlay global (unduh file/ZIP repo/ZIP folder/rename/pindah/hapus); bagian "Commit terbaru" + kartu README dihapus dari LazyColumn → dua chip OutlinedButton (Riwayat commit + README) berdampingan di bawah breadcrumb; CommitHistoryDialog & ReadmeDialog layar penuh (README render MarkdownText, empty-state bila belum ada); MoveDialog baru — jelajahi folder repo (breadcrumb + daftar subfolder, fetchContents), preview "Path baru", validasi pindah-ke-dalam-diri + deteksi nama bentrok, konfirmasi → renameFile/renameFolder (1 commit Git Data API); FileRow kini FileTypeBadge + nama folder SemiBold + menu "Pindah/Pindah folder" (ikon DriveFileMove) + "Buka folder".
+- FileScreens.kt: unduh dari Viewer (biasa & LFS) juga pakai overlay progres byte.
+- HomeScreen.kt: RepoCard didesain ulang — badge ikon folder berwarna (hijau publik/biru privat) dalam kotak 42 dp, nama Bold, border halus alpha 0.6.
+- Perbaikan kompilasi: branch `else` when di downloadFile harus mengembalikan String (kini val loc = …; loc), import ikon Code/Description/Image di Common.kt.
+- Push ditolak (non fast-forward): remote punya commit dari aplikasi GitPush sendiri — user menghapus GitPush-v1.1/1.2/1.3.apk via fitur hapus aplikasi. Ditangani: git rm --cached GitPush-v1.4/1.5.apk + .gitignore "GitPush-v*.apk" (APK tidak lagi di-commit ke repo), rebase FETCH_HEAD, push sukses (04a9944).
+- Versi: versionCode 10, versionName 1.5; Settings/Profile "v1.5".
+- Build: assembleRelease BUILD SUCCESSFUL 3m10s (percobaan 1 gagal 2 error kompilasi — diperbaiki); aapt: versionCode 10, versionName 1.5; APK 3.292.741 B → /home/z/my-project/GitPush-v1.5.apk.
+- Release v1.5 (id 398578226) + aset GitPush-v1.5.apk (state uploaded, unduh 200, cmp identik).
+
+Stage Summary:
+- Semua proses (unduh file byte-nyata, ZIP n/N file, pindah/rename/hapus bertahap) kini tampil dialog progres global — tidak ada proses diam-diam.
+- Layar repository fokus ala file manager: riwayat commit & README jadi tombol layar penuh; README render markdown benar.
+- Pindah file/folder tersedia (ciri khas file manager lengkap: buka, unduh, pindah, rename, edit, hapus).
+- Ikon warna per tipe file + kartu repo premium — tampilan terasa baru.
+- Artefak: GitPush-v1.5.apk (versionCode 10) → Release v1.5.
