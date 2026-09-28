@@ -333,3 +333,23 @@ Work Log:
 Stage Summary:
 - Hapus repository kini tersedia di dua tempat: tekan-lama kartu di Beranda, dan menu kebab di layar repository — sama-sama lewat dialog konfirmasi ketik-nama (anti salah hapus).
 - Teruji end-to-end di level API dengan PAT user (204). Artefak: GitPush-v1.3.apk (versionCode 8) → Release v1.3.
+
+---
+Task ID: 15
+Agent: Z.ai Code (main)
+Task: Fix unduhan file jadi 0 KB dari APK (feedback user: "unduh file dari apk kita cuma jad 0 kb. ini jelas parah")
+
+Work Log:
+- Reproduksi akar masalah dengan repo sementara + file 2 MB: Contents API untuk file > 1 MB mengembalikan content = "" (string KOSONG, bukan null) → o.isNull("content") = false → Base64.decode("") = 0 byte → file 0 KB tersimpan di Download. Terverifikasi: content length 0, encoding none.
+- Uji tiga jalur di repo sementara yang sama: Blobs API JSON default mengembalikan base64 penuh (2.842.808 B utk 2 MB); Blobs API Accept: vnd.github.raw → HTTP 200, 2.097.152 B, cmp IDENTIK dengan file asli.
+- GitHubApi.kt: (1) fetchFileMeta — content string kosong kini diperlakukan null (takeIf { isNotBlank() }) + komentar penjelasan; (2) streamBlobRaw() baru — stream mentah Accept: vnd.github.raw dari /git/blobs/{sha} langsung ke OutputStream (256 KB buffer, tanpa RAM penuh); (3) downloadFile ditulis ulang — LFS via meta.isLfs (pointer ±130 B selalu utuh di Contents API) ATAU cek murah file ≤ 1024 B; file besar (contentB64 kosong) → streamBlobRaw; file kecil biasa → decode base64; (4) zipBlobs — entry ZIP non-LFS kini streamBlobRaw (bukan fetchBlobBytes yang memuat JSON base64 penuh ke RAM).
+- Efek samping positif: viewer file besar di FileScreens tidak lagi tampil kosong (fallback fetchBlobBytes yang kontennya benar).
+- Versi: versionCode 8 → 9, versionName 1.3 → 1.4; Settings "GitPush v1.4", Profile "v1.4 NATIVE".
+- Build: assembleRelease BUILD SUCCESSFUL 3m07s; aapt: versionCode 9, versionName 1.4; APK 3.243.589 B → /home/z/my-project/GitPush-v1.4.apk.
+- Push commit f48b544; Release v1.4 (id 398553860) + aset GitPush-v1.4.apk (state uploaded, unduh 200, cmp identik).
+- Cleanup: repo uji tmp-dl-test-913 dihapus (204), file sementara /tmp dibersihkan.
+
+Stage Summary:
+- Unduhan file > 1 MB tidak lagi 0 KB — di-stream mentah byte-per-byte dari Git Blobs API (teruji identik dengan asli).
+- Unduhan ZIP juga streaming (RAM hemat), LFS tetap konten asli.
+- Artefak: GitPush-v1.4.apk (versionCode 9) → Release v1.4.
