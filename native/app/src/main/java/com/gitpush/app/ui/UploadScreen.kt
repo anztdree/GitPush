@@ -758,7 +758,7 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                 StepItem("Selesai", stageState(phase, 3))
             }
 
-            // ===== Progres keseluruhan (byte) =====
+            // ===== Progres keseluruhan (byte AGREGAT semua file paralel) =====
             if (phase == "prepare" || phase == "upload" || phase == "commit") {
                 Spacer(Modifier.height(14.dp))
                 val progressBytes = UploadManager.progressBytes()
@@ -798,45 +798,115 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp)
                     )
+
+                    // Info retry otomatis — pengguna tahu proses belum mati
+                    UploadManager.retryMsg?.let { rm ->
+                        Text(
+                            "⟳ Mengulang: $rm",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = YellowWarn,
+                            modifier = Modifier.padding(top = 3.dp)
+                        )
+                    }
                 } else {
                     LinearProgressIndicator(Modifier.fillMaxWidth().height(8.dp), color = GreenPrimary)
                     Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Menganalisis ${UploadManager.filesTotal} file…",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    // Tahap analisis: tampilkan progres checksum file yang sedang dibaca
+                    val hf = UploadManager.hashFile
+                    if (hf.isNotEmpty()) {
+                        Text(
+                            "Menganalisis ${UploadManager.filesTotal} file — ${hf.substringAfterLast('/')}",
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val ht = UploadManager.hashTotal
+                        if (ht > 0) {
+                            val hfFrac = (UploadManager.hashSent.toFloat() / ht).coerceIn(0f, 1f)
+                            LinearProgressIndicator(
+                                progress = { hfFrac },
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(4.dp),
+                                color = GreenPrimary.copy(alpha = 0.6f),
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            Text(
+                                "${formatBytes(UploadManager.hashSent)} / ${formatBytes(ht)}",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        } else {
+                            Text(
+                                "Membaca ${formatBytes(UploadManager.hashSent)}…",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+                    } else {
+                        Text(
+                            "Menganalisis ${UploadManager.filesTotal} file…",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
-                // ===== File yang sedang dikirim =====
-                if (phase == "upload" && UploadManager.currentFile.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "Sekarang: ${UploadManager.currentFile}",
-                        fontSize = 11.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    val cur = UploadManager.currentTotal
-                    if (cur > 0) {
-                        val cf = (UploadManager.currentSent.toFloat() / cur).coerceIn(0f, 1f)
-                        LinearProgressIndicator(
-                            progress = { cf },
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).height(4.dp),
-                            color = BlueAccent,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        Text(
-                            "${formatBytes(UploadManager.currentSent)} / ${formatBytes(cur)}",
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 2.dp)
-                        )
-                    } else {
-                        LinearProgressIndicator(
-                            Modifier.fillMaxWidth().padding(top = 4.dp).height(4.dp),
-                            color = BlueAccent
-                        )
+                // ===== File yang sedang dikirim (SEMUA slot paralel, bukan satu saja) =====
+                if (phase == "upload") {
+                    val actives = UploadManager.activeFiles
+                    if (actives.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        actives.take(3).forEach { (p, sent, tot) ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(top = 3.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.UploadFile,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(13.dp),
+                                    tint = BlueAccent
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        p.substringAfterLast('/'),
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (tot > 0) {
+                                        val cf = (sent.toFloat() / tot).coerceIn(0f, 1f)
+                                        LinearProgressIndicator(
+                                            progress = { cf },
+                                            modifier = Modifier.fillMaxWidth().padding(top = 2.dp).height(3.dp),
+                                            color = BlueAccent,
+                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                        )
+                                        Text(
+                                            "${formatBytes(sent)} / ${formatBytes(tot)}",
+                                            fontSize = 9.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    } else {
+                                        LinearProgressIndicator(
+                                            Modifier.fillMaxWidth().padding(top = 2.dp).height(3.dp),
+                                            color = BlueAccent
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (actives.size > 3) {
+                            Text(
+                                "+${actives.size - 3} file lain sedang dikirim…",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 3.dp)
+                            )
+                        }
                     }
                 }
             }

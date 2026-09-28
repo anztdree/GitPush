@@ -21,6 +21,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * State upload tingkat proses — upload TETAP BERJALAN walau pindah tab,
  * panel progres bisa dibuka lagi kapan saja dari tab Unggah.
+ *
+ * Progres v2 (akurat untuk multi-file paralel):
+ * - bytesUploaded = counter AGREGAT semua file paralel (dulu hanya file terakhir
+ *   yang dihitung → bar "melompat" dan kecepatan/ETA salah).
+ * - activeFiles = daftar file yang sedang dikirim (maks 4 ditampilkan).
+ * - hashFile/hashSent/hashTotal = progres analisis/checksum file besar.
+ * - retryMsg = info pengulangan otomatis ("Mengulang X (2/5)…").
  */
 object UploadManager {
 
@@ -37,22 +44,37 @@ object UploadManager {
     var filesTotal by mutableStateOf(0); private set
     var filesDone by mutableStateOf(0); private set
     var bytesTotal by mutableStateOf(0L); private set
-    var bytesDone by mutableStateOf(0L); private set
-    var currentFile by mutableStateOf(""); private set
-    var currentSent by mutableStateOf(0L); private set
-    var currentTotal by mutableStateOf(0L); private set
-    var speedBps by mutableStateOf(0L); private set
-    var elapsedMs by mutableStateOf(0L); private set
+
+    /** Total byte terkirim SEMUA file paralel — sumber progres bar & kecepatan. */
+    var bytesUploaded by mutableStateOf(0L); private set
+
+    /** File yang sedang dikirim: (path, terkirim, total) — maks 4 terakhir. */
+    var activeFiles by mutableStateOf(listOf<Triple<String, Long, Long>>()); private set
+
+    /** Progres analisis (checksum) file besar pada tahap persiapan. */
+    var hashFile by mutableStateOf(""); private set
+    var hashSent by mutableStateOf(0L); private set
+    var hashTotal by mutableStateOf(0L); private set
+
+    /** Info retry otomatis yang sedang berlangsung, mis. "video.mp4 (2/5)". */
+    var retryMsg by mutableStateOf<String?>(null); private set
+
     var skipped by mutableStateOf(listOf<Pair<String, String>>()); private set
     var commitSha by mutableStateOf<String?>(null); private set
     var error by mutableStateOf<String?>(null); private set
+    var speedBps by mutableStateOf(0L); private set
+    var elapsedMs by mutableStateOf(0L); private set
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
     private val cancelled = AtomicBoolean(false)
 
-    fun progressBytes(): Long = bytesDone + currentSent
+    /** Kompatibilitas lama: byte file terakhir (bar mini per file di panel). */
+    var currentFile by mutableStateOf(""); private set
+    var currentSent by mutableStateOf(0L); private set
+    var currentTotal by mutableStateOf(0L); private set
 
+    fun progressBytes(): Long = bytesUploaded
     fun requestCancel() {
         cancelled.set(true)
         job?.cancel()
@@ -75,7 +97,12 @@ object UploadManager {
         filesTotal = files.size
         filesDone = 0
         bytesTotal = 0L
-        bytesDone = 0L
+        bytesUploaded = 0L
+        activeFiles = emptyList()
+        hashFile = ""
+        hashSent = 0L
+        hashTotal = 0L
+        retryMsg = null
         currentFile = ""
         currentSent = 0L
         currentTotal = 0L
@@ -109,11 +136,18 @@ object UploadManager {
                 }
             }
             try {
+                // Peta path → (sent, total) untuk daftar file aktif
+                val actives = LinkedHashMap<String, Pair<Long, Long>>()
+                fun snapshot() {
+                    activeFiles = actives.entries.toList().takeLast(4)
+                        .map { Triple(it.key, it.value.first, it.value.second) }
+                }
+
                 val hooks = UploadHooks(
                     onStage = { s ->
                         stage = s
                         phase = when {
-                            s.startsWith("Menyiapkan") -> "prepare"
+                            s.startsWith("Menyiapkan") || s.startsWith("Menganalisis") -> "prepare"
                             s.startsWith("Mengunggah") -> "upload"
                             else -> "commit"
                         }
@@ -122,24 +156,35 @@ object UploadManager {
                         filesTotal = f
                         bytesTotal = b
                     },
+                    onAggregate = { total -> bytesUploaded = total },
+                    onHash = { p, read, total ->
+                        hashFile = p
+                        hashSent = read
+                        hashTotal = total
+                    },
                     onCurrent = { p, sent, total ->
                         currentFile = p
                         currentSent = sent
                         currentTotal = total
+                        actives[p] = sent to total
+                        snapshot()
+                        retryMsg = null // ada kemajuan → bukan sedang mengulang
                     },
-                    onFileDone = { _, sz ->
-                        bytesDone += sz
+                    onFileDone = { p, sz ->
                         filesDone += 1
-                        currentFile = ""
-                        currentSent = 0L
-                        currentTotal = 0L
+                        actives.remove(p)
+                        snapshot()
+                        retryMsg = null
                     },
                     onFileSkipped = { p, sz, reason ->
                         skipped = skipped + (p to reason)
                         bytesTotal = (bytesTotal - sz).coerceAtLeast(0L)
-                        currentFile = ""
-                        currentSent = 0L
-                        currentTotal = 0L
+                        actives.remove(p)
+                        snapshot()
+                        retryMsg = null
+                    },
+                    onRetry = { p, attempt, max, waitMs ->
+                        retryMsg = "${p.substringAfterLast('/')} — percobaan $attempt/$max${if (waitMs > 0) " (jeda ${waitMs / 1000} d)" else ""}"
                     },
                     isCancelled = { cancelled.get() }
                 )

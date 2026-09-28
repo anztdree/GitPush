@@ -43,6 +43,12 @@ class UploadHooks(
     val onCurrent: (path: String, sent: Long, total: Long) -> Unit = { _, _, _ -> },
     val onFileDone: (path: String, size: Long) -> Unit = { _, _ -> },
     val onFileSkipped: (path: String, size: Long, reason: String) -> Unit = { _, _, _ -> },
+    /** BARU: total byte TERKIRIM semua file paralel (akurat — dulu hanya 1 file terhitung). */
+    val onAggregate: (bytesSentAll: Long) -> Unit = {},
+    /** BARU: progres pembacaan/checksum file saat tahap analisis (file besar bisa lama). */
+    val onHash: (path: String, read: Long, total: Long) -> Unit = { _, _, _ -> },
+    /** BARU: notifikasi retry per file agar pengguna tahu proses masih berjalan. */
+    val onRetry: (path: String, attempt: Int, maxAttempts: Int, waitMs: Long) -> Unit = { _, _, _, _ -> },
     val isCancelled: () -> Boolean = { false }
 )
 
@@ -65,8 +71,11 @@ object GitHubApi {
 
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
-        .writeTimeout(300, TimeUnit.SECONDS)
+        .readTimeout(240, TimeUnit.SECONDS)
+        // Write timeout OkHttp = batas IDLE antar operasi tulis, bukan total — koneksi
+        // lambat yang terus mengirim data tidak akan terputus. 10 menit idle = sangat aman
+        // untuk PUT LFS 100 MB+ di jaringan seluler lambat.
+        .writeTimeout(600, TimeUnit.SECONDS)
         .build()
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
@@ -646,7 +655,7 @@ object GitHubApi {
     ): UploadResult = withContext(Dispatchers.IO) {
         val started = System.currentTimeMillis()
         val throttle = Throttle()
-        val ctx = UpCtx(token, owner, repo, resolver, hooks, throttle)
+        val ctx = UpCtx(token, owner, repo, resolver, hooks, throttle, AtomicLong(0))
 
         // Sanitasi path + buang duplikat
         val files = filesIn.map { f ->
@@ -663,7 +672,9 @@ object GitHubApi {
         }
         val baseTreeSha = baseCommitSha?.let { commitTreeSha(token, owner, repo, it) }
 
-        // Rencana: ukuran pasti (probe bila metadata 0) + sha256 utk LFS
+        // Rencana: ukuran pasti (probe bila metadata 0) + sha256 utk LFS.
+        // Progres analisis dilaporkan via onHash — file besar bisa dibaca 1-2 kali
+        // penuh (checksum) dan dulu fase ini TANPA feedback sehingga kelihatan macet.
         val plans = ArrayList<Plan>(files.size)
         var totalBytes = 0L
         for (f in files) {
@@ -671,43 +682,68 @@ object GitHubApi {
             var size = f.size
             var sha256: String? = null
             if (size <= 0) {
-                val p = hashAndSize(resolver, f)
+                hooks.onStage("Menganalisis file")
+                val p = hashAndSize(resolver, f, 0) { read -> hooks.onHash(f.path, read, 0) }
                 size = p.first
                 sha256 = p.second
             }
             val lfs = size > LFS_THRESHOLD_BYTES
-            if (lfs && sha256 == null) sha256 = hashAndSize(resolver, f).second
+            if (lfs && sha256 == null) {
+                hooks.onStage("Menganalisis file")
+                sha256 = hashAndSize(resolver, f, size) { read -> hooks.onHash(f.path, read, size) }.second
+            }
             plans.add(Plan(f, size, sha256, lfs))
             totalBytes += size
         }
         hooks.onTotal(files.size, totalBytes)
 
-        // ===== Unggah blob (paralel 3, gagal per-file dilompati) =====
+        // ===== Unggah blob — paralel TIERED (kunci kecepatan & keandalan): =====
+        // - File kecil (<1 MB): 6 paralel — ratusan file selesai jauh lebih cepat.
+        // - File menengah (1-95 MB): 3 paralel.
+        // - File LFS (>95 MB): 1 sekaligus SAJA. Dulu paralel 3 berebut bandwidth
+        //   sehingga PUT ratusan MB mudah putus dan gagal berulang.
         hooks.onStage("Mengunggah file")
         val shas = arrayOfNulls<String>(files.size)
         val failed = ConcurrentHashMap<String, String>()
-        val sem = Semaphore(3)
+        val semFast = Semaphore(6)
+        val semMid = Semaphore(3)
+        val semLfs = Semaphore(1)
+        // File kecil dulu (banyak kemenangan cepat → progres terasa hidup), besar terakhir
+        val ordered = files.indices.sortedWith(
+            compareBy<Int> { plans[it].lfs }.thenBy { plans[it].size }
+        )
         coroutineScope {
-            files.forEachIndexed { idx, f ->
+            for (idx in ordered) {
+                val f = files[idx]
                 launch {
+                    val plan = plans[idx]
+                    val sem = when {
+                        plan.lfs -> semLfs
+                        plan.size >= 1L * 1024 * 1024 -> semMid
+                        else -> semFast
+                    }
                     sem.withPermit {
                         if (hooks.isCancelled()) return@withPermit
-                        val plan = plans[idx]
+                        // Delta byte file ini → agregat global (dulu hanya 1 file dihitung
+                        // sehingga progres bar "melompat" dan kecepatan/ETA salah)
+                        var lastLocal = 0L
+                        val onP: (Long) -> Unit = { sent ->
+                            val d = sent - lastLocal
+                            lastLocal = sent
+                            if (d > 0) ctx.addSent(d)
+                            hooks.onCurrent(f.path, sent, plan.size)
+                            if (hooks.isCancelled()) throw IOException("Dibatalkan")
+                        }
                         try {
                             val blobSha: String = when {
                                 plan.size == 0L -> EMPTY_BLOB_SHA
                                 plan.lfs -> {
                                     val oid = plan.sha256 ?: hashAndSize(resolver, f).second
-                                    ctx.lfsUpload(f, plan.size, oid) { sent ->
-                                        hooks.onCurrent(f.path, sent, plan.size)
-                                        if (hooks.isCancelled()) throw IOException("Dibatalkan")
-                                    }
+                                    ctx.lfsUpload(f, plan.size, oid, onP)
                                     // Pointer LFS di-commit sebagai blob kecil
                                     ctx.smallBlob(lfsPointer(oid, plan.size).toByteArray())
                                 }
-                                else -> ctx.blobCreate(f) { sent ->
-                                    hooks.onCurrent(f.path, sent, plan.size)
-                                }
+                                else -> ctx.blobCreate(f, onP)
                             }
                             if (blobSha.isEmpty()) throw GhException("SHA blob kosong dari GitHub")
                             shas[idx] = blobSha
@@ -795,9 +831,15 @@ object GitHubApi {
 
     private data class Plan(val f: PickedFile, val size: Long, val sha256: String?, val lfs: Boolean)
 
+    /**
+     * Throttle adaptif dengan PELURUHAN. Dulu sekali kena limit (403/429) semua request
+     * masuk gerbang 700 ms SELAMANYA → ratusan file terasa super lambat (±1,4 req/s).
+     * Kini setiap 6 keberhasilan berturut-turut jeda dilonggarkan 25% sampai hilang.
+     */
     private class Throttle {
         var minIntervalMs = 0
         private var lastStart = 0L
+        private var okStreak = 0
 
         @Synchronized
         fun gate() {
@@ -809,7 +851,18 @@ object GitHubApi {
         }
 
         @Synchronized
+        fun success() {
+            okStreak++
+            if (okStreak >= 6) {
+                okStreak = 0
+                if (minIntervalMs > 0) minIntervalMs = (minIntervalMs * 3) / 4
+                if (minIntervalMs < 100) minIntervalMs = 0
+            }
+        }
+
+        @Synchronized
         fun slowDown(ms: Int) {
+            okStreak = 0
             if (ms > minIntervalMs) minIntervalMs = ms
         }
     }
@@ -820,8 +873,15 @@ object GitHubApi {
         val repo: String,
         val resolver: android.content.ContentResolver?,
         val hooks: UploadHooks,
-        val throttle: Throttle
-    )
+        val throttle: Throttle,
+        val aggregate: AtomicLong
+    ) {
+        /** Tambah delta byte terkirim dan laporkan total agregat (thread-safe). */
+        fun addSent(delta: Long) {
+            if (delta <= 0) return
+            hooks.onAggregate(aggregate.addAndGet(delta))
+        }
+    }
 
     /** call() dengan retry: IOException / 5xx / 429 / 403 limit sekunder. */
     private suspend fun callRetry(
@@ -833,7 +893,9 @@ object GitHubApi {
             if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
             throttle.gate()
             try {
-                return@withContext call(token, method, path, body)
+                val r = call(token, method, path, body)
+                throttle.success()
+                return@withContext r
             } catch (e: GhException) {
                 last = e
                 val secondary = e.code == 403 && (e.retryAfterMs > 0 || (e.message ?: "").contains("secondary", true))
@@ -858,23 +920,27 @@ object GitHubApi {
         else -> throw IOException("Sumber file tidak ada")
     }
 
-    /** Satu pass: hitung ukuran + sha256 (dipakai bila metadata ukuran tidak ada / file besar). */
+    /** Satu pass: hitung ukuran + sha256 (dipakai bila metadata ukuran tidak ada / file besar).
+     *  onRead = progres pembacaan agar tahap analisis file besar tidak kelihatan macet. */
     private suspend fun hashAndSize(
-        resolver: android.content.ContentResolver?, f: PickedFile
+        resolver: android.content.ContentResolver?, f: PickedFile,
+        knownTotal: Long = 0, onRead: (Long) -> Unit = {}
     ): Pair<Long, String> = withContext(Dispatchers.IO) {
         val md = MessageDigest.getInstance("SHA-256")
         var n = 0L
         openSource(resolver, f).use { ins ->
-            val buf = ByteArray(256 * 1024)
+            val buf = ByteArray(512 * 1024)
             while (true) {
                 val r = ins.read(buf)
                 if (r < 0) break
                 if (r > 0) {
                     md.update(buf, 0, r)
                     n += r
+                    onRead(n)
                 }
             }
         }
+        if (knownTotal > 0) onRead(knownTotal) // pastikan 100% terlapor
         n to md.digest().joinToString("") { "%02x".format(it) }
     }
 
@@ -895,7 +961,7 @@ object GitHubApi {
 
         override fun writeTo(sink: BufferedSink) {
             val enc = java.util.Base64.getEncoder()
-            val buf = ByteArray(3 * 32768) // kelipatan 3 → padding benar per chunk
+            val buf = ByteArray(3 * 65536) // kelipatan 3 → padding benar per chunk; 192 KB = syscall lebih sedikit
             sink.writeUtf8(B64_PREFIX)
             openSource(resolver, f).use { ins ->
                 while (true) {
@@ -927,7 +993,7 @@ object GitHubApi {
         override fun contentLength() = if (size > 0) size else -1L
 
         override fun writeTo(sink: BufferedSink) {
-            val buf = ByteArray(256 * 1024)
+            val buf = ByteArray(512 * 1024) // 512 KB — syscall lebih sedikit untuk PUT ratusan MB
             openSource(resolver, f).use { ins ->
                 while (true) {
                     if (isCancelled()) throw IOException("Dibatalkan")
@@ -956,6 +1022,7 @@ object GitHubApi {
                     mapOf("Accept" to "application/vnd.github+json", "X-GitHub-Api-Version" to "2022-11-28")
                 )
                 if (code in 200..299) {
+                    throttle.success()
                     return@withContext JSONObject(text).optString("sha")
                 }
                 val secondary = code == 403 && (ra > 0 || text.contains("secondary", true))
@@ -964,7 +1031,10 @@ object GitHubApi {
                 val retryable = code in 500..599 || code == 429 || code == 0 || secondary
                 if (!retryable || attempt >= 5) throw GhException("HTTP $code: ${text.take(160)}", code, ra)
                 if (code == 403 || code == 429) throttle.slowDown(700)
-                delay(if (ra > 0) ra.coerceAtMost(60_000) else 1000L * attempt)
+                val wait = if (ra > 0) ra.coerceAtMost(60_000) else 1000L * attempt
+                // Pengguna harus tahu proses masih berjalan saat mengulang (dulu diam = terlihat macet)
+                hooks.onRetry(f.path, attempt, 5, wait)
+                delay(wait)
             }
             @Suppress("UNREACHABLE_CODE")
             ""
@@ -1057,7 +1127,7 @@ object GitHubApi {
                 retryable = true // JSON terpotong/rusak — jaringan tidak stabil
             }
             if (obj == null) {
-                if (attempt >= 3) {
+                if (attempt >= 4) {
                     throw GhException(
                         if (retryable) "Koneksi Git LFS tidak stabil — coba lagi"
                         else "Respons Git LFS tidak valid"
@@ -1084,11 +1154,16 @@ object GitHubApi {
         }
 
         // --- PUT ke storage (URL presigned; JANGAN tambah header auth sendiri) ---
+        // Dulu 3x restart dari nol; di jaringan seluler sering semuanya gagal.
+        // Kini 5x dengan backoff, DAN sebelum tiap pengulangan cek dulu apakah objek
+        // ternyata SUDAH sampai di storage (respons saja yang hilang) — bila ya,
+        // unggahan 100 MB tidak diulang, langsung lanjut.
         val up = actions.optJSONObject("upload") ?: throw GhException("URL upload LFS tidak tersedia")
         val upHeaders = mutableMapOf<String, String>()
         up.optJSONObject("header")?.let { h ->
             h.keys().forEach { k -> upHeaders[k] = h.optString(k) }
         }
+        val maxPut = 5
         var putAttempt = 0
         while (true) {
             if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
@@ -1102,9 +1177,17 @@ object GitHubApi {
                 if (e.code != 0) throw e
                 0
             }
-            if (putCode in 200..299) break
-            if (putAttempt >= 3) throw GhException("Upload objek LFS gagal (HTTP $putCode)")
-            delay(1000L * putAttempt)
+            if (putCode in 200..299) {
+                throttle.success()
+                break
+            }
+            if (putAttempt >= maxPut) throw GhException("Upload objek LFS gagal setelah $maxPut percobaan (HTTP $putCode)")
+            // Respons hilang? Objek bisa jadi sudah tersimpan — verifikasi dulu sebelum
+            // memutuskan mengunggah ulang ratusan MB dari nol.
+            if (lfsObjectExists(oid, size)) break
+            val wait = (1000L shl (putAttempt - 1)).coerceAtMost(10_000) // 1s,2s,4s,8s
+            hooks.onRetry(f.path, putAttempt, maxPut, wait)
+            delay(wait)
         }
 
         // --- Verify (opsional; header persis dari respons) ---
