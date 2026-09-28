@@ -91,3 +91,4 @@ server.log
 /components.json
 /eslint.config.mjs
 /scripts/gen-icons.mjs
+GitPush-v*.apk
