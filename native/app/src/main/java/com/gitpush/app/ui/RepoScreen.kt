@@ -778,29 +778,26 @@ private fun FileRow(
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
-                    // Status update terakhir ala website: pesan commit + waktu relatif
+                    // Status update terakhir: HANYA waktu — tanpa pesan commit.
+                    // (Pesan commit memotong tampilan waktu di layar sempit.)
                     lastCommit?.let { lc ->
-                        Spacer(Modifier.height(1.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Filled.History,
-                                contentDescription = null,
-                                modifier = Modifier.size(11.dp),
-                                tint = GreenPrimary.copy(alpha = 0.75f)
-                            )
-                            Spacer(Modifier.size(4.dp))
-                            Text(
-                                buildString {
-                                    if (lc.message.isNotBlank()) append(lc.message)
-                                    val t = timeAgo(lc.date)
-                                    if (isNotEmpty() && t != "-") append("  •  ")
-                                    if (t != "-") append(t)
-                                },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
+                        val t = timeAgo(lc.date)
+                        if (t != "-") {
+                            Spacer(Modifier.height(1.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Filled.History,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(11.dp),
+                                    tint = GreenPrimary.copy(alpha = 0.75f)
+                                )
+                                Spacer(Modifier.size(4.dp))
+                                Text(
+                                    "Diperbarui $t",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
+                                )
+                            }
                         }
                     }
                     Text(
