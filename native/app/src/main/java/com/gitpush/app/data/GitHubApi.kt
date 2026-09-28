@@ -159,16 +159,23 @@ object GitHubApi {
 
     suspend fun fetchUser(token: String): GhUser = withContext(Dispatchers.IO) {
         val o = call(token, "GET", "/user") ?: throw GhException("Respons kosong")
-        GhUser(
-            login = o.optString("login"),
-            name = if (o.isNull("name")) o.optString("login") else o.optString("name"),
-            avatarUrl = o.optString("avatar_url"),
-            bio = if (o.isNull("bio")) null else o.optString("bio"),
-            followers = o.optInt("followers"),
-            following = o.optInt("following"),
-            publicRepos = o.optInt("public_repos")
-        )
+        parseUser(o)
     }
+
+    private fun parseUser(o: JSONObject): GhUser = GhUser(
+        login = o.optString("login"),
+        name = if (o.isNull("name")) o.optString("login") else o.optString("name"),
+        avatarUrl = o.optString("avatar_url"),
+        bio = if (o.isNull("bio")) null else o.optString("bio"),
+        followers = o.optInt("followers"),
+        following = o.optInt("following"),
+        publicRepos = o.optInt("public_repos"),
+        company = if (o.isNull("company")) null else o.optString("company"),
+        location = if (o.isNull("location")) null else o.optString("location"),
+        blog = if (o.isNull("blog")) null else o.optString("blog"),
+        email = if (o.isNull("email")) null else o.optString("email"),
+        createdAt = o.optString("created_at")
+    )
 
     suspend fun fetchRepos(token: String): List<GhRepo> = withContext(Dispatchers.IO) {
         val out = mutableListOf<GhRepo>()
@@ -196,7 +203,9 @@ object GitHubApi {
         issues = o.optInt("open_issues_count"),
         defaultBranch = o.optString("default_branch", "main").ifEmpty { "main" },
         updatedAt = o.optString("updated_at"),
-        sizeKb = o.optLong("size")
+        sizeKb = o.optLong("size"),
+        homepage = if (o.isNull("homepage")) null else o.optString("homepage"),
+        watchers = o.optInt("subscribers_count")
     )
 
     suspend fun createRepo(
@@ -1399,5 +1408,460 @@ object GitHubApi {
         val zipName = "$repo-$branch.zip"
         zipBlobs(context, zipName, token, owner, repo, blobs, onProgress)
         zipName
+    }
+
+    // ==================================================================
+    // ============ FITUR LENGKAP ALA GITHUB (semua via PAT) ============
+    // ==================================================================
+
+    // ---------- Star / Watch / Fork / Edit repository ----------
+
+    /** Apakah repo ini sudah di-star oleh pengguna? (204 = ya, 404 = belum) */
+    suspend fun isStarred(token: String, owner: String, repo: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                call(token, "GET", "/user/starred/$owner/$repo")
+                true // 204 tanpa body → JSONObject() kosong
+            } catch (e: GhException) {
+                if (e.code == 404) false else throw e
+            }
+        }
+
+    /** Star (true) / unstar (false) repository. */
+    suspend fun setStarred(token: String, owner: String, repo: String, star: Boolean): Unit =
+        withContext(Dispatchers.IO) {
+            if (star) call(token, "PUT", "/user/starred/$owner/$repo")
+            else call(token, "DELETE", "/user/starred/$owner/$repo")
+            Unit
+        }
+
+    /** Apakah pengguna memantau (watch) repository ini? */
+    suspend fun isWatching(token: String, owner: String, repo: String): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                call(token, "GET", "/repos/$owner/$repo/subscription")
+                true
+            } catch (e: GhException) {
+                if (e.code == 404) false else throw e
+            }
+        }
+
+    suspend fun setWatching(token: String, owner: String, repo: String, watch: Boolean): Unit =
+        withContext(Dispatchers.IO) {
+            if (watch) {
+                call(
+                    token, "PUT", "/repos/$owner/$repo/subscription",
+                    JSONObject().put("subscribed", true)
+                )
+            } else {
+                call(token, "DELETE", "/repos/$owner/$repo/subscription")
+            }
+            Unit
+        }
+
+    /** Fork repository ke akun pengguna (GitHub memproses secara asinkron). */
+    suspend fun forkRepo(token: String, owner: String, repo: String): GhRepo =
+        withContext(Dispatchers.IO) {
+            val o = call(token, "POST", "/repos/$owner/$repo/forks", JSONObject())
+                ?: throw GhException("Gagal fork repository")
+            parseRepo(o)
+        }
+
+    /** Edit repository: nama baru, deskripsi, situs web, visibilitas. */
+    suspend fun editRepo(
+        token: String, owner: String, repo: String,
+        newName: String, description: String, homepage: String, isPrivate: Boolean
+    ): GhRepo = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("private", isPrivate)
+        if (newName.isNotBlank() && newName != repo) body.put("name", newName.trim())
+        body.put("description", description)
+        body.put("homepage", homepage)
+        val o = call(token, "PATCH", "/repos/$owner/$repo", body)
+            ?: throw GhException("Gagal menyimpan perubahan repository")
+        parseRepo(o)
+    }
+
+    // ---------- Branch: buat / hapus ----------
+
+    /** Buat branch baru dari branch sumber (ref sama dengan HEAD branch sumber). */
+    suspend fun createBranch(
+        token: String, owner: String, repo: String, fromBranch: String, newBranch: String
+    ): Unit = withContext(Dispatchers.IO) {
+        val sha = refSha(token, owner, repo, fromBranch)
+        call(
+            token, "POST", "/repos/$owner/$repo/git/refs",
+            JSONObject().put("ref", "refs/heads/$newBranch").put("sha", sha)
+        )
+        Unit
+    }
+
+    /** Hapus branch (branch default tidak boleh dihapus — divalidasi di UI). */
+    suspend fun deleteBranch(token: String, owner: String, repo: String, branch: String): Unit =
+        withContext(Dispatchers.IO) {
+            call(token, "DELETE", "/repos/$owner/$repo/git/refs/heads/${Uri.encode(branch)}")
+            Unit
+        }
+
+    // ---------- Issues ----------
+
+    private fun parseIssue(o: JSONObject): GhIssue = GhIssue(
+        number = o.optInt("number"),
+        title = o.optString("title"),
+        body = if (o.isNull("body")) null else o.optString("body"),
+        state = o.optString("state"),
+        author = o.optJSONObject("user")?.optString("login") ?: "",
+        avatarUrl = o.optJSONObject("user")?.optString("avatar_url"),
+        comments = o.optInt("comments"),
+        createdAt = o.optString("created_at"),
+        updatedAt = o.optString("updated_at"),
+        labels = o.optJSONArray("labels")?.let { a ->
+            (0 until a.length()).map { i -> a.getJSONObject(i).optString("name") }
+        } ?: emptyList(),
+        isPr = o.has("pull_request")
+    )
+
+    /** Daftar issue + PR (state: open | closed | all). */
+    suspend fun fetchIssues(token: String, owner: String, repo: String, state: String): List<GhIssue> =
+        withContext(Dispatchers.IO) {
+            val arr = callArray(
+                token, "GET",
+                "/repos/$owner/$repo/issues?state=$state&sort=updated&per_page=50"
+            )
+            (0 until arr.length()).map { i -> parseIssue(arr.getJSONObject(i)) }
+        }
+
+    suspend fun createIssue(
+        token: String, owner: String, repo: String, title: String, body: String
+    ): GhIssue = withContext(Dispatchers.IO) {
+        val b = JSONObject().put("title", title)
+        if (body.isNotBlank()) b.put("body", body)
+        val o = call(token, "POST", "/repos/$owner/$repo/issues", b)
+            ?: throw GhException("Gagal membuat issue")
+        parseIssue(o)
+    }
+
+    /** Tutup / buka ulang issue. */
+    suspend fun setIssueState(token: String, owner: String, repo: String, number: Int, open: Boolean): Unit =
+        withContext(Dispatchers.IO) {
+            call(
+                token, "PATCH", "/repos/$owner/$repo/issues/$number",
+                JSONObject().put("state", if (open) "open" else "closed")
+            )
+            Unit
+        }
+
+    suspend fun fetchIssueComments(token: String, owner: String, repo: String, number: Int): List<GhComment> =
+        withContext(Dispatchers.IO) {
+            val arr = callArray(token, "GET", "/repos/$owner/$repo/issues/$number/comments?per_page=50")
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                GhComment(
+                    author = o.optJSONObject("user")?.optString("login") ?: "",
+                    avatarUrl = o.optJSONObject("user")?.optString("avatar_url"),
+                    body = o.optString("body"),
+                    createdAt = o.optString("created_at")
+                )
+            }
+        }
+
+    suspend fun addIssueComment(
+        token: String, owner: String, repo: String, number: Int, body: String
+    ): Unit = withContext(Dispatchers.IO) {
+        call(
+            token, "POST", "/repos/$owner/$repo/issues/$number/comments",
+            JSONObject().put("body", body)
+        )
+        Unit
+    }
+
+    // ---------- Pull Request ----------
+
+    private fun parsePull(o: JSONObject): GhPull = GhPull(
+        number = o.optInt("number"),
+        title = o.optString("title"),
+        body = if (o.isNull("body")) null else o.optString("body"),
+        state = o.optString("state"),
+        author = o.optJSONObject("user")?.optString("login") ?: "",
+        avatarUrl = o.optJSONObject("user")?.optString("avatar_url"),
+        createdAt = o.optString("created_at"),
+        headRef = o.optJSONObject("head")?.optString("ref") ?: "",
+        baseRef = o.optJSONObject("base")?.optString("ref") ?: "",
+        mergeable = if (o.isNull("mergeable")) null else o.optBoolean("mergeable"),
+        draft = o.optBoolean("draft")
+    )
+
+    suspend fun fetchPulls(token: String, owner: String, repo: String, state: String): List<GhPull> =
+        withContext(Dispatchers.IO) {
+            val arr = callArray(
+                token, "GET", "/repos/$owner/$repo/pulls?state=$state&sort=updated&per_page=50"
+            )
+            (0 until arr.length()).map { i -> parsePull(arr.getJSONObject(i)) }
+        }
+
+    /** Gabungkan pull request (metode merge). Gagal 405/409 dilempar apa adanya. */
+    suspend fun mergePull(
+        token: String, owner: String, repo: String, number: Int
+    ): Unit = withContext(Dispatchers.IO) {
+        call(
+            token, "PUT", "/repos/$owner/$repo/pulls/$number/merge",
+            JSONObject().put("merge_method", "merge")
+        )
+        Unit
+    }
+
+    // ---------- Releases ----------
+
+    suspend fun fetchReleases(token: String, owner: String, repo: String): List<GhRelease> =
+        withContext(Dispatchers.IO) {
+            try {
+                val arr = callArray(token, "GET", "/repos/$owner/$repo/releases?per_page=20")
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    GhRelease(
+                        name = o.optString("name").ifEmpty { o.optString("tag_name") },
+                        tagName = o.optString("tag_name"),
+                        body = if (o.isNull("body")) null else o.optString("body"),
+                        publishedAt = o.optString("published_at"),
+                        assetCount = o.optJSONArray("assets")?.length() ?: 0,
+                        isPrerelease = o.optBoolean("prerelease")
+                    )
+                }
+            } catch (e: GhException) {
+                if (e.code == 404) emptyList() else throw e
+            }
+        }
+
+    // ---------- Pencarian global ----------
+
+    /** Cari repository di seluruh GitHub (bukan hanya milik pengguna). */
+    suspend fun searchRepos(token: String, query: String): List<GhRepo> =
+        withContext(Dispatchers.IO) {
+            // /search/repositories mengembalikan OBJEK { items: [...] } — bukan array,
+            // sehingga memakai call() langsung, bukan callArray().
+            val o = call(
+                token, "GET",
+                "/search/repositories?q=${Uri.encode(query)}&sort=updated&per_page=30"
+            ) ?: throw GhException("Pencarian gagal")
+            val list = o.optJSONArray("items") ?: return@withContext emptyList()
+            (0 until list.length()).map { i -> parseRepo(list.getJSONObject(i)) }
+        }
+
+    // ---------- Pengguna lain: profil, followers, following, ikuti ----------
+
+    suspend fun fetchUserPublic(token: String, login: String): GhUser = withContext(Dispatchers.IO) {
+        val o = call(token, "GET", "/users/$login") ?: throw GhException("Pengguna tidak ditemukan", 404)
+        parseUser(o)
+    }
+
+    private fun parseUserLite(o: JSONObject): GhUserLite = GhUserLite(
+        login = o.optString("login"),
+        avatarUrl = o.optString("avatar_url")
+    )
+
+    suspend fun fetchFollowers(token: String, login: String): List<GhUserLite> =
+        withContext(Dispatchers.IO) {
+            val arr = callArray(token, "GET", "/users/$login/followers?per_page=50")
+            (0 until arr.length()).map { i -> parseUserLite(arr.getJSONObject(i)) }
+        }
+
+    suspend fun fetchFollowing(token: String, login: String): List<GhUserLite> =
+        withContext(Dispatchers.IO) {
+            val arr = callArray(token, "GET", "/users/$login/following?per_page=50")
+            (0 until arr.length()).map { i -> parseUserLite(arr.getJSONObject(i)) }
+        }
+
+    /** Ikuti / berhenti mengikuti pengguna. */
+    suspend fun setFollowing(token: String, login: String, follow: Boolean): Unit =
+        withContext(Dispatchers.IO) {
+            if (follow) call(token, "PUT", "/user/following/$login")
+            else call(token, "DELETE", "/user/following/$login")
+            Unit
+        }
+
+    /** Perbarui profil publik: nama, email, situs, perusahaan, lokasi, bio. */
+    suspend fun updateProfile(
+        token: String, name: String, email: String, blog: String,
+        company: String, location: String, bio: String
+    ): GhUser = withContext(Dispatchers.IO) {
+        val o = call(
+            token, "PATCH", "/user",
+            JSONObject()
+                .put("name", name)
+                .put("email", email)
+                .put("blog", blog)
+                .put("company", company)
+                .put("location", location)
+                .put("bio", bio)
+        ) ?: throw GhException("Gagal memperbarui profil")
+        parseUser(o)
+    }
+
+    // ---------- Email (GET/POST/DELETE /user/emails) ----------
+
+    suspend fun fetchEmails(token: String): List<GhEmail> = withContext(Dispatchers.IO) {
+        val arr = callArray(token, "GET", "/user/emails")
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            GhEmail(
+                email = o.optString("email"),
+                primary = o.optBoolean("primary"),
+                verified = o.optBoolean("verified"),
+                visibility = if (o.isNull("visibility")) null else o.optString("visibility")
+            )
+        }
+    }
+
+    suspend fun addEmail(token: String, email: String): Unit = withContext(Dispatchers.IO) {
+        call(token, "POST", "/user/emails", JSONObject().put("emails", JSONArray().put(email.trim())))
+        Unit
+    }
+
+    suspend fun deleteEmail(token: String, email: String): Unit = withContext(Dispatchers.IO) {
+        call(token, "DELETE", "/user/emails", JSONObject().put("emails", JSONArray().put(email)))
+        Unit
+    }
+
+    // ---------- Kunci SSH (GET/POST/DELETE /user/keys) ----------
+
+    suspend fun fetchKeys(token: String): List<GhKey> = withContext(Dispatchers.IO) {
+        val arr = callArray(token, "GET", "/user/keys?per_page=50")
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            GhKey(
+                id = o.optLong("id"),
+                title = o.optString("title"),
+                key = o.optString("key"),
+                createdAt = o.optString("created_at")
+            )
+        }
+    }
+
+    suspend fun addKey(token: String, title: String, key: String): Unit = withContext(Dispatchers.IO) {
+        call(token, "POST", "/user/keys", JSONObject().put("title", title.trim()).put("key", key.trim()))
+        Unit
+    }
+
+    suspend fun deleteKey(token: String, id: Long): Unit = withContext(Dispatchers.IO) {
+        call(token, "DELETE", "/user/keys/$id")
+        Unit
+    }
+
+    // ---------- Gist (catatan cepat ala GitHub) ----------
+
+    private fun parseGist(o: JSONObject): GhGist {
+        val files = o.optJSONObject("files")
+        var first: String? = null
+        var count = 0
+        if (files != null) {
+            count = files.length()
+            first = files.keys().asSequence().firstOrNull()
+        }
+        return GhGist(
+            id = o.optString("id"),
+            description = if (o.isNull("description")) null else o.optString("description"),
+            firstFileName = first,
+            fileCount = count,
+            updatedAt = o.optString("updated_at"),
+            isPublic = o.optBoolean("public")
+        )
+    }
+
+    suspend fun fetchGists(token: String): List<GhGist> = withContext(Dispatchers.IO) {
+        val arr = callArray(token, "GET", "/gists?per_page=30")
+        (0 until arr.length()).map { i -> parseGist(arr.getJSONObject(i)) }
+    }
+
+    suspend fun createGist(
+        token: String, fileName: String, content: String, description: String, isPublic: Boolean
+    ): Unit = withContext(Dispatchers.IO) {
+        val files = JSONObject().put(
+            fileName.ifBlank { "catatan.txt" },
+            JSONObject().put("content", content)
+        )
+        call(
+            token, "POST", "/gists",
+            JSONObject().put("files", files).put("description", description).put("public", isPublic)
+        )
+        Unit
+    }
+
+    /** Isi file pertama gist (untuk pratinjau). */
+    suspend fun fetchGistContent(token: String, id: String): String = withContext(Dispatchers.IO) {
+        val o = call(token, "GET", "/gists/$id") ?: throw GhException("Gist tidak ditemukan", 404)
+        val files = o.optJSONObject("files") ?: return@withContext ""
+        val first = files.keys().asSequence().firstOrNull() ?: return@withContext ""
+        files.optJSONObject(first)?.optString("content") ?: ""
+    }
+
+    suspend fun deleteGist(token: String, id: String): Unit = withContext(Dispatchers.IO) {
+        call(token, "DELETE", "/gists/$id")
+        Unit
+    }
+
+    // ---------- Organisasi & aktivitas ----------
+
+    suspend fun fetchOrgs(token: String): List<GhOrg> = withContext(Dispatchers.IO) {
+        val arr = callArray(token, "GET", "/user/orgs?per_page=30")
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            GhOrg(
+                login = o.optString("login"),
+                avatarUrl = o.optString("avatar_url"),
+                description = if (o.isNull("description")) null else o.optString("description")
+            )
+        }
+    }
+
+    /** Umpan aktivitas publik pengguna (ala tab activity GitHub). */
+    suspend fun fetchEvents(token: String, login: String): List<GhEvent> =
+        withContext(Dispatchers.IO) {
+            val arr = callArray(token, "GET", "/users/$login/events/public?per_page=30")
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                val type = o.optString("type")
+                val repo = o.optJSONObject("repo")?.optString("name") ?: ""
+                val p = o.optJSONObject("payload")
+                GhEvent(
+                    type = type,
+                    repo = repo,
+                    createdAt = o.optString("created_at"),
+                    detail = when (type) {
+                        "PushEvent" -> "${p?.optJSONArray("commits")?.length() ?: p?.optInt("size") ?: 1} commit di-push"
+                        "CreateEvent" -> "Membuat ${p?.optString("ref_type") ?: "repo"}${p?.optString("ref")?.let { " $it" } ?: ""}"
+                        "DeleteEvent" -> "Menghapus ${p?.optString("ref_type") ?: "ref"}${p?.optString("ref")?.let { " $it" } ?: ""}"
+                        "WatchEvent" -> "Menyukai repository"
+                        "ForkEvent" -> "Fork repository"
+                        "IssuesEvent" -> "Issue #${p?.optJSONObject("issue")?.optInt("number") ?: "?"} ${p?.optString("action") ?: ""}"
+                        "IssueCommentEvent" -> "Komentar di issue"
+                        "PullRequestEvent" -> "PR #${p?.optInt("number") ?: "?"} ${p?.optString("action") ?: ""}"
+                        "PullRequestReviewEvent" -> "Review pull request"
+                        "PullRequestReviewCommentEvent" -> "Komentar review PR"
+                        "ReleaseEvent" -> "Rilis ${p?.optJSONObject("release")?.optString("tag_name") ?: ""}"
+                        "PublicEvent" -> "Repository dipublikasikan"
+                        "MemberEvent" -> "Menambah kolaborator"
+                        "GollumEvent" -> "Memperbarui wiki"
+                        else -> type.removeSuffix("Event")
+                    }
+                )
+            }
+        }
+
+    // ---------- Scope token ----------
+
+    /**
+     * Scope PAT aktif dari header respons `X-OAuth-Scopes` (hanya ada di /user).
+     * Dipakai layar Pengaturan agar pengguna tahu kemampuan token-nya.
+     */
+    suspend fun fetchTokenScopes(token: String): List<String> = withContext(Dispatchers.IO) {
+        val b = Request.Builder().url("$API/user")
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "GitPush-Android")
+            .header("Authorization", "Bearer $token")
+            .get()
+        http.newCall(b.build()).execute().use { r ->
+            val scopes = r.header("X-OAuth-Scopes")
+            if (!r.isSuccessful) throw GhException("HTTP ${r.code}", r.code)
+            scopes?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        }
     }
 }

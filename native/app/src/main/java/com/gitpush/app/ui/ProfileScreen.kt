@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,16 +19,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -44,8 +50,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gitpush.app.data.GhEvent
 import com.gitpush.app.data.GhUser
 import com.gitpush.app.data.GitHubApi
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +74,12 @@ fun ProfileScreen() {
     val ctx = LocalContext.current
     var u by remember { mutableStateOf<GhUser?>(Store.user.value) }
     var confirmSignOut by remember { mutableStateOf(false) }
+    var showEditProfile by remember { mutableStateOf(false) }
+    var showGists by remember { mutableStateOf(false) }
+    var showOrgs by remember { mutableStateOf(false) }
+    var showFollowers by remember { mutableStateOf(false) }
+    var showFollowing by remember { mutableStateOf(false) }
+    var events by remember { mutableStateOf<List<GhEvent>?>(null) }
 
     LaunchedEffect(Unit) {
         try {
@@ -77,15 +91,22 @@ fun ProfileScreen() {
         } catch (e: Exception) {
             // pakai cache
         }
+        // Umpan aktivitas publik (ala GitHub) — diam-diam bila gagal
+        events = runCatching {
+            withContext(Dispatchers.IO) {
+                GitHubApi.fetchEvents(Store.token.value, Store.user.value?.login ?: u?.login ?: "")
+            }
+        }.getOrNull() ?: emptyList()
     }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
     ) {
+        // ===== Kartu profil =====
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth().padding(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(u?.avatarUrl ?: "", 60.dp)
+                    Avatar(u?.avatarUrl ?: "", 62.dp)
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
@@ -93,7 +114,7 @@ fun ProfileScreen() {
                             fontWeight = FontWeight.Bold,
                             fontSize = 17.sp,
                             maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             "@${u?.login ?: "…"}",
@@ -101,33 +122,101 @@ fun ProfileScreen() {
                             fontSize = 12.sp
                         )
                         if (!u?.bio.isNullOrBlank()) {
+                            Spacer(Modifier.height(2.dp))
                             Text(
                                 u!!.bio!!,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 11.sp,
+                                lineHeight = 15.sp,
                                 maxLines = 2,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
+                        if (!u?.company.isNullOrBlank() || !u?.location.isNullOrBlank()) {
+                            Spacer(Modifier.height(3.dp))
+                            val meta = listOfNotNull(u?.company, u?.location).joinToString("  •  ")
+                            Text(
+                                meta,
+                                color = GrayMuted,
+                                fontSize = 10.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = { showEditProfile = true },
+                        enabled = u != null,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+                    ) {
+                        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(13.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Edit", fontSize = 12.sp)
                     }
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatChip("${u?.publicRepos ?: 0}", "repo publik")
-                    StatChip("${u?.followers ?: 0}", "pengikut")
-                    StatChip("${u?.following ?: 0}", "mengikuti")
+                    StatChip("${u?.followers ?: 0}", "pengikut") { showFollowers = true }
+                    StatChip("${u?.following ?: 0}", "mengikuti") { showFollowing = true }
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { showGists = true },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+                    ) {
+                        Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(14.dp), tint = BlueAccent)
+                        Spacer(Modifier.width(5.dp))
+                        Text("Gist saya", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { showOrgs = true },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+                    ) {
+                        Icon(Icons.Filled.Business, contentDescription = null, modifier = Modifier.size(14.dp), tint = PurpleAccent)
+                        Spacer(Modifier.width(5.dp))
+                        Text("Organisasi", fontSize = 12.sp)
+                    }
                 }
             }
         }
 
+        // ===== Aktivitas terbaru (umpan ala GitHub) =====
         Spacer(Modifier.height(20.dp))
-        Text("Riwayat aktivitas", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text("Aktivitas terbaru", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Spacer(Modifier.height(8.dp))
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            when {
+                events == null -> Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(color = GreenPrimary, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                }
+                events!!.isEmpty() -> Text(
+                    "Belum ada aktivitas publik. Push, star, fork, dan commit Anda akan tampil di sini.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    modifier = Modifier.padding(14.dp)
+                )
+                else -> Column(Modifier.padding(vertical = 4.dp)) {
+                    EventsList(events!!)
+                }
+            }
+        }
+
+        // ===== Riwayat aktivitas lokal =====
+        Spacer(Modifier.height(20.dp))
+        Text("Riwayat GitPush", fontWeight = FontWeight.Bold, fontSize = 15.sp)
         Spacer(Modifier.height(8.dp))
         val hist = Store.history.value
         if (hist.isEmpty()) {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -141,7 +230,7 @@ fun ProfileScreen() {
         } else {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column {
@@ -158,13 +247,13 @@ fun ProfileScreen() {
                             )
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(h.label, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                Text(h.label, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
                                     h.repo,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 10.sp,
                                     maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                             Text(timeAgoMs(h.time), color = GrayMuted, fontSize = 10.sp)
@@ -175,6 +264,7 @@ fun ProfileScreen() {
             TextButton(onClick = { Store.clearHistory() }) { Text("Bersihkan riwayat", fontSize = 12.sp) }
         }
 
+        // ===== Tentang =====
         Spacer(Modifier.height(18.dp))
         Text("Tentang", fontWeight = FontWeight.Bold, fontSize = 15.sp)
         Spacer(Modifier.height(8.dp))
@@ -193,9 +283,9 @@ fun ProfileScreen() {
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Aplikasi Android asli — Kotlin + Jetpack Compose, tanpa webview/wrapper. " +
-                        "Upload massal 1 commit, edit/rename/hapus file, download file & folder & repository, " +
-                        "notifikasi, dan buat repository baru.",
+                    "Aplikasi Android asli — Kotlin + Jetpack Compose + font Inter, tanpa webview/wrapper. " +
+                        "File manager penyimpanan awan: upload massal 1 commit, edit/rename/pindah/hapus, " +
+                        "unduh file & folder & repo, issue, pull request, release, gist, dan pengaturan akun lengkap.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
                     lineHeight = 17.sp
@@ -226,6 +316,43 @@ fun ProfileScreen() {
         Spacer(Modifier.height(28.dp))
     }
 
+    if (showEditProfile) {
+        u?.let { uu ->
+            EditProfileDialog(
+                user = uu,
+                onDismiss = { showEditProfile = false },
+                onSaved = {
+                    showEditProfile = false
+                    Toast.makeText(ctx, "Profil diperbarui ✓", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+    }
+    if (showGists) GistsDialog(onDismiss = { showGists = false })
+    if (showOrgs) OrgsDialog(onDismiss = { showOrgs = false })
+    if (showFollowers) {
+        UsersListDialog(
+            title = "Pengikut Anda",
+            fetcher = {
+                withContext(Dispatchers.IO) {
+                    GitHubApi.fetchFollowers(Store.token.value, u?.login ?: "")
+                }
+            },
+            onDismiss = { showFollowers = false }
+        )
+    }
+    if (showFollowing) {
+        UsersListDialog(
+            title = "Yang Anda ikuti",
+            fetcher = {
+                withContext(Dispatchers.IO) {
+                    GitHubApi.fetchFollowing(Store.token.value, u?.login ?: "")
+                }
+            },
+            onDismiss = { showFollowing = false }
+        )
+    }
+
     if (confirmSignOut) {
         AlertDialog(
             onDismissRequest = { confirmSignOut = false },
@@ -243,8 +370,13 @@ fun ProfileScreen() {
 }
 
 @Composable
-private fun StatChip(value: String, label: String) {
-    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(8.dp)) {
+private fun StatChip(value: String, label: String, onClick: (() -> Unit)? = null) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(9.dp),
+        onClick = onClick ?: {},
+        enabled = onClick != null
+    ) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(value, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             Spacer(Modifier.width(4.dp))

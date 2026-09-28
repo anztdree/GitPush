@@ -8,8 +8,8 @@
 <p>
   <img src="https://img.shields.io/badge/version-1.0-blue" alt="version" />
   <img src="https://img.shields.io/badge/platform-Android%209%2B-green" alt="platform" />
-  <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-orange" alt="compose" />
-  <img src="https://img.shields.io/badge/ukuran%20APK-~3%20MB-success" alt="size" />
+  <img src="https://img.shields.io/badge/UI-Jetpack%20Compose%20%2B%20Inter-orange" alt="compose" />
+  <img src="https://img.shields.io/badge/ukuran%20APK-~4%20MB-success" alt="size" />
 </p>
 
 > 100% native — tanpa WebView, tanpa wrapper. Tampilan modern, semua proses tampil progresnya.
@@ -41,15 +41,22 @@
 
 | Kategori | Detail |
 |---|---|
-| **File manager repository** | Browse folder + breadcrumb, **status update terakhir per file/folder ala website GitHub** (waktu diperbarui terakhir), ikon berwarna per tipe file, ukuran riil termasuk objek LFS |
+| **File manager repository** | Browse folder + breadcrumb, **status update terakhir per file/folder ala website GitHub**, ikon berwarna per tipe file, ukuran riil termasuk objek LFS |
 | **Kelola file** | Buka (teks/gambar/markdown/biner), **edit**, buat, **rename**, **pindah file/folder**, hapus — semua lewat menu baris |
-| **Upload massal** | Banyak file dan/atau seluruh folder → **1 commit** (blobs → tree → commit → update ref); file **>95 MB otomatis via Git LFS** |
-| **Progres semua proses** | Upload (per-byte, kecepatan + ETA, batal kapan saja), unduh, ZIP, pindah, rename, hapus — **semua tampil dialog progres** |
-| **Download** | File tunggal (file besar streaming tanpa 0 KB), folder (ZIP), atau seluruh repository (ZIP, objek LFS diisi konten asli) → tersimpan di `Download/GitPush` |
-| **Riwayat & README** | Tombol riwayat commit (layar penuh) + tombol README dengan render markdown |
-| **Repository** | Buat repository baru, hapus repository (konfirmasi ketik nama), ganti branch, kuota riil 2 GB (termasuk LFS) |
-| **Notifikasi** | Notifikasi GitHub dengan filter & tandai dibaca |
-| **Lainnya** | Tema gelap/terang, responsif (HP & tablet), pencarian repo, pesan commit default bisa diatur |
+| **Upload massal** | Banyak file dan/atau seluruh folder → **1 commit** (blobs → tree → commit → update ref); file **>95 MB otomatis via Git LFS**; tahan retry (objek yang sudah terunggah tidak diulang) |
+| **Download** | File tunggal (streaming, aman 100 MB+), folder (ZIP), seluruh repository (ZIP dengan isi LFS asli) → `Download/GitPush` |
+| **Aksi repo ala GitHub** | **Star/Unstar**, **Fork**, **Watch/Unwatch**, unduh ZIP, statistik star/fork/issue/watcher, salin URL, buka di browser |
+| **Kelola repository** | Buat repository, **edit repository** (nama, deskripsi, situs web, privat/publik), hapus (konfirmasi ketik nama), **buat & hapus branch**, ganti branch |
+| **Issues** | Daftar terbuka/ditutup, buat issue, baca detail, **komentar**, tutup/buka ulang |
+| **Pull request** | Daftar PR, lihat head→base, **gabungkan (merge) PR** dengan konfirmasi |
+| **Releases** | Daftar rilis repository + catatan rilis + jumlah aset |
+| **Pencarian global** | Cari repository **di seluruh GitHub** (bukan hanya milik sendiri) — langsung bisa dibuka |
+| **Profil & akun** | **Edit profil publik** (nama, bio, perusahaan, lokasi, situs, email), daftar **pengikut/mengikuti + tombol ikuti**, **organisasi**, **umpan aktivitas** ala GitHub |
+| **Gist** | Lihat, buat, baca isi, salin, hapus gist — catatan cepat lintas perangkat |
+| **Pengaturan lengkap** | Kelola **email akun**, **kunci SSH**, lihat **scope PAT** aktif, tema, pesan commit default, riwayat aktivitas |
+| **Notifikasi** | Notifikasi GitHub dengan filter & tandai dibaca (satu per satu / semua) |
+| **Desain & tipografi** | **Font Inter Variable** (4 bobot), skala huruf rapi (letterSpacing negatif utk judul), header seksi konsisten, ikon berwarna per kategori file, tema gelap/terang/ikuti sistem, responsif HP & tablet |
+| **Progres semua proses** | Upload (per-byte, kecepatan + ETA, batal), unduh, ZIP, pindah, rename, hapus — semua tampil dialog progres |
 
 ## 🔨 Bangun dari Sumber
 
@@ -76,7 +83,7 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 Aplikasi memakai label versi **1.0** (tahap stabilisasi — versi terlihat tidak berubah-ubah). Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
 
-Sorotan build saat ini: fix upload file besar (LFS) untuk retry setelah upaya nyaris berhasil, deteksi repo terhapus, baris file menampilkan waktu update terakhir.
+Sorotan build saat ini: **font Inter + tipografi baru**, **aksi repo ala GitHub (star/fork/watch)**, **issues & pull request**, **releases**, **pencarian global**, **edit repository + branch CRUD**, **pengaturan akun lengkap (profil, email, kunci SSH, scope PAT)**, **gist**, dan tata letak layar yang lebih efisien.
 
 ---
 

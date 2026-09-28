@@ -1,6 +1,7 @@
 package com.gitpush.app.ui
 
 import android.widget.Toast
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,10 +15,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Token
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -27,9 +31,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,16 +46,47 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.gitpush.app.data.GitHubApi
 
+/** Baris menu pengaturan ber-ikon: judul + keterangan + aksi kanan. */
 @Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        fontWeight = FontWeight.Bold,
-        fontSize = 13.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 6.dp)
-    )
+private fun SettingsRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    tint: androidx.compose.ui.graphics.Color = GreenPrimary,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: (() -> Unit)? = null
+) {
+    Card(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                color = tint.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    subtitle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+            }
+            trailing?.invoke()
+            if (onClick != null && trailing == null) {
+                TextButton(onClick = onClick) { Text("Kelola") }
+            }
+        }
+    }
 }
 
 @Composable
@@ -57,24 +94,65 @@ fun SettingsScreen() {
     val ctx = LocalContext.current
     var msgDraft by remember { mutableStateOf(Store.defaultMsg.value) }
     var confirmSignOut by remember { mutableStateOf(false) }
+    var showEditProfile by remember { mutableStateOf(false) }
+    var showEmails by remember { mutableStateOf(false) }
+    var showKeys by remember { mutableStateOf(false) }
+    var scopes by remember { mutableStateOf<List<String>?>(null) }
+
+    // Ambil scope PAT aktif (header X-OAuth-Scopes) untuk ditampilkan
+    LaunchedEffect(Unit) {
+        runCatching {
+            scopes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                GitHubApi.fetchTokenScopes(Store.token.value)
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Text(
-            "Pengaturan",
-            fontWeight = FontWeight.Bold,
-            fontSize = 18.sp,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)
-        )
-        Text(
-            "Preferensi disimpan di perangkat ini",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(start = 16.dp, top = 2.dp)
+        AppHeader(
+            title = "Pengaturan",
+            subtitle = "Akun, tampilan, dan preferensi GitPush"
         )
 
-        SectionLabel("Tampilan")
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        SectionLabel2("Akun")
+        SettingsRow(
+            icon = Icons.Filled.Person,
+            title = "Profil publik",
+            subtitle = "Nama, bio, perusahaan, lokasi, situs web, email publik",
+            onClick = { showEditProfile = true }
+        )
+        SettingsRow(
+            icon = Icons.Filled.AlternateEmail,
+            title = "Email",
+            subtitle = "Kelola alamat email akun GitHub Anda",
+            onClick = { showEmails = true }
+        )
+        SettingsRow(
+            icon = Icons.Filled.Key,
+            title = "Kunci SSH",
+            subtitle = "Daftar, tambah, dan hapus kunci SSH",
+            tint = PurpleAccent,
+            onClick = { showKeys = true }
+        )
+        SettingsRow(
+            icon = Icons.Filled.Token,
+            title = "Token akses (PAT)",
+            subtitle = when {
+                scopes == null -> "Memeriksa scope token…"
+                scopes!!.isEmpty() -> "Token tanpa scope khusus"
+                else -> "Scope: ${scopes!!.joinToString(", ")}"
+            },
+            tint = YellowWarn,
+            trailing = {
+                TextButton(onClick = { confirmSignOut = true }) {
+                    Text("Keluar", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        )
+
+        SectionLabel2("Tampilan")
+        Card(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Filled.Palette,
@@ -84,7 +162,7 @@ fun SettingsScreen() {
                     )
                     Spacer(Modifier.width(10.dp))
                     Column {
-                        Text("Tema aplikasi", fontSize = 14.sp)
+                        Text("Tema aplikasi", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                         Text(
                             "Ikuti sistem, gelap ala GitHub, atau terang",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -115,9 +193,9 @@ fun SettingsScreen() {
             }
         }
 
-        SectionLabel("Commit")
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        SectionLabel2("Commit")
+        Card(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+            Column(Modifier.fillMaxWidth().padding(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Filled.History,
@@ -126,7 +204,7 @@ fun SettingsScreen() {
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(10.dp))
-                    Text("Pesan commit default", fontSize = 14.sp)
+                    Text("Pesan commit default", fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -150,100 +228,50 @@ fun SettingsScreen() {
             }
         }
 
-        SectionLabel("Unduhan")
-        Card(Modifier.fillMaxWidth()) {
-            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Download,
-                    contentDescription = null,
-                    tint = GreenPrimary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text("Lokasi file unduhan", fontSize = 14.sp)
-                    Text(
-                        "File, folder (ZIP), dan repository (ZIP) tersimpan di Download/GitPush",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp
-                    )
-                }
-            }
-        }
-
-        SectionLabel("Data")
-        Card(Modifier.fillMaxWidth()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.History,
-                    contentDescription = null,
-                    tint = GreenPrimary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Riwayat aktivitas", fontSize = 14.sp)
-                    Text(
-                        "${Store.history.value.size} entri tersimpan lokal",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp
-                    )
-                }
+        SectionLabel2("Unduhan & Data")
+        SettingsRow(
+            icon = Icons.Filled.Download,
+            title = "Lokasi file unduhan",
+            subtitle = "File, folder (ZIP), dan repository (ZIP) tersimpan di Download/GitPush"
+        )
+        SettingsRow(
+            icon = Icons.Filled.History,
+            title = "Riwayat aktivitas",
+            subtitle = "${Store.history.value.size} entri tersimpan lokal",
+            tint = BlueAccent,
+            trailing = {
                 TextButton(onClick = {
                     Store.clearHistory()
                     Toast.makeText(ctx, "Riwayat dibersihkan", Toast.LENGTH_SHORT).show()
                 }) { Text("Bersihkan") }
             }
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Token,
-                    contentDescription = null,
-                    tint = GreenPrimary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("Token akses", fontSize = 14.sp)
-                    Text(
-                        "Hanya tersimpan di perangkat ini, dikirim langsung ke api.github.com",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp
-                    )
-                }
-                TextButton(onClick = { confirmSignOut = true }) {
-                    Text("Keluar", color = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
+        )
 
-        SectionLabel("Tentang")
-        Card(Modifier.fillMaxWidth()) {
-            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Info,
-                    contentDescription = null,
-                    tint = GreenPrimary,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text("GitPush v1.0 — Native Android", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    Text(
-                        "Kotlin + Jetpack Compose • Git Data API • OkHttp — murni native, tanpa webview.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp,
-                        lineHeight = 15.sp
-                    )
-                }
-            }
-        }
+        SectionLabel2("Tentang")
+        SettingsRow(
+            icon = Icons.Filled.Info,
+            title = "GitPush v1.0 — Native Android",
+            subtitle = "Kotlin + Jetpack Compose + Inter — murni native, tanpa webview. " +
+                "Semua fitur berjalan langsung ke api.github.com memakai PAT Anda."
+        )
 
         Spacer(Modifier.height(28.dp))
     }
+
+    if (showEditProfile) {
+        Store.user.value?.let { u ->
+            EditProfileDialog(
+                user = u,
+                onDismiss = { showEditProfile = false },
+                onSaved = {
+                    showEditProfile = false
+                    Toast.makeText(ctx, "Profil diperbarui ✓", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+    }
+    if (showEmails) EmailsDialog(onDismiss = { showEmails = false })
+    if (showKeys) KeysDialog(onDismiss = { showKeys = false })
 
     if (confirmSignOut) {
         AlertDialog(

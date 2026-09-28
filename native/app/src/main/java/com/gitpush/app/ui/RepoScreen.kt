@@ -3,6 +3,7 @@ package com.gitpush.app.ui
 import android.util.Base64
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -27,7 +29,11 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.CallMerge
+import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DriveFileMove
@@ -36,8 +42,14 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -66,7 +78,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -110,6 +126,19 @@ fun RepoScreen(s: Screen.Repo) {
     var realUsage by remember { mutableStateOf<Long?>(null) }
     // Commit terakhir per file/folder (ala website GitHub) — terisi progresif per baris
     val lastCommits = remember { mutableStateMapOf<String, GhCommit>() }
+    // Status aksi repo ala GitHub: star, watch, dialog fitur
+    var starred by remember { mutableStateOf(false) }
+    var watching by remember { mutableStateOf(false) }
+    var starBusy by remember { mutableStateOf(false) }
+    var watchBusy by remember { mutableStateOf(false) }
+    var forkBusy by remember { mutableStateOf(false) }
+    var showIssues by remember { mutableStateOf(false) }
+    var showPulls by remember { mutableStateOf(false) }
+    var showReleases by remember { mutableStateOf(false) }
+    var showEditRepo by remember { mutableStateOf(false) }
+    var showCreateBranch by remember { mutableStateOf(false) }
+    var deleteBranchTarget by remember { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
 
     val loadRepoInfo: () -> Unit = {
         scope.launch {
@@ -191,6 +220,15 @@ fun RepoScreen(s: Screen.Repo) {
             }
         }
         loadRepoInfo()
+        // Status star & watch (diam-diam bila gagal)
+        scope.launch {
+            starred = runCatching {
+                withContext(Dispatchers.IO) { GitHubApi.isStarred(Store.token.value, s.owner, s.name) }
+            }.getOrDefault(false)
+            watching = runCatching {
+                withContext(Dispatchers.IO) { GitHubApi.isWatching(Store.token.value, s.owner, s.name) }
+            }.getOrDefault(false)
+        }
     }
     LaunchedEffect(branch) {
         // Pulihkan folder terakhir branch ini (root bila belum pernah navigasi)
@@ -323,11 +361,73 @@ fun RepoScreen(s: Screen.Repo) {
         }
     }
 
+    // ---- Aksi repo ala GitHub: star, watch, fork, salin URL ----
+
+    val toggleStar: () -> Unit = {
+        if (!starBusy) {
+            starBusy = true
+            val target = !starred
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        GitHubApi.setStarred(Store.token.value, s.owner, s.name, target)
+                    }
+                    starred = target
+                    Store.log("repo", if (target) "Star ${s.name}" else "Unstar ${s.name}", s.fullName)
+                    toast(if (target) "Repo ini sekarang Anda sukai ★" else "Bintang dilepas")
+                } catch (e: Exception) {
+                    toast("Gagal: ${GitHubApi.humanError(e)}")
+                } finally {
+                    starBusy = false
+                }
+            }
+        }
+    }
+
+    val toggleWatch: () -> Unit = {
+        if (!watchBusy) {
+            watchBusy = true
+            val target = !watching
+            scope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        GitHubApi.setWatching(Store.token.value, s.owner, s.name, target)
+                    }
+                    watching = target
+                    toast(if (target) "Memantau repository — notifikasi aktif" else "Berhenti memantau")
+                } catch (e: Exception) {
+                    toast("Gagal: ${GitHubApi.humanError(e)}")
+                } finally {
+                    watchBusy = false
+                }
+            }
+        }
+    }
+
+    val forkRepo: () -> Unit = {
+        if (!forkBusy) {
+            forkBusy = true
+            scope.launch {
+                try {
+                    val forked = withContext(Dispatchers.IO) {
+                        GitHubApi.forkRepo(Store.token.value, s.owner, s.name)
+                    }
+                    Store.log("repo", "Fork ${s.name}", forked.fullName)
+                    toast("Fork dibuat: ${forked.fullName} ✓")
+                } catch (e: Exception) {
+                    toast("Gagal: ${GitHubApi.humanError(e)}")
+                } finally {
+                    forkBusy = false
+                }
+            }
+        }
+    }
+
     // ---- UI ----
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 4.dp),
+            Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = {
@@ -343,11 +443,26 @@ fun RepoScreen(s: Screen.Repo) {
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
-                Text(
-                    s.fullName + if (s.isPrivate) " • Private" else " • Public",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (s.isPrivate) Icons.Filled.Lock else Icons.Filled.Public,
+                        contentDescription = null,
+                        tint = GrayMuted,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Spacer(Modifier.size(4.dp))
+                    Text(
+                        if (s.isPrivate) "Privat" else "Publik",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                    repoInfo?.language?.let { l ->
+                        Spacer(Modifier.size(8.dp))
+                        Box(Modifier.size(8.dp).background(langColor(l), CircleShape))
+                        Spacer(Modifier.size(4.dp))
+                        Text(l, color = GrayMuted, fontSize = 11.sp)
+                    }
+                }
             }
             IconButton(onClick = {
                 openDir(path)
@@ -360,6 +475,56 @@ fun RepoScreen(s: Screen.Repo) {
                 Icon(Icons.Filled.MoreVert, contentDescription = "Menu repository")
             }
             DropdownMenu(expanded = showRepoMenu, onDismissRequest = { showRepoMenu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Edit repository") },
+                    leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(17.dp)) },
+                    onClick = {
+                        showRepoMenu = false
+                        if (repoInfo != null) showEditRepo = true else toast("Info repository belum termuat")
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Issues") },
+                    leadingIcon = { Icon(Icons.Filled.BugReport, contentDescription = null, modifier = Modifier.size(17.dp), tint = BlueAccent) },
+                    onClick = { showRepoMenu = false; showIssues = true }
+                )
+                DropdownMenuItem(
+                    text = { Text("Pull request") },
+                    leadingIcon = { Icon(Icons.Filled.CallMerge, contentDescription = null, modifier = Modifier.size(17.dp), tint = GreenPrimary) },
+                    onClick = { showRepoMenu = false; showPulls = true }
+                )
+                DropdownMenuItem(
+                    text = { Text("Releases") },
+                    leadingIcon = { Icon(Icons.Filled.Tag, contentDescription = null, modifier = Modifier.size(17.dp), tint = PurpleAccent) },
+                    onClick = { showRepoMenu = false; showReleases = true }
+                )
+                DropdownMenuItem(
+                    text = { Text("Branch baru…") },
+                    leadingIcon = { Icon(Icons.Filled.CallSplit, contentDescription = null, modifier = Modifier.size(17.dp), tint = BlueAccent) },
+                    onClick = { showRepoMenu = false; showCreateBranch = true }
+                )
+                DropdownMenuItem(
+                    text = { Text("Salin URL") },
+                    leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(17.dp)) },
+                    onClick = {
+                        showRepoMenu = false
+                        clipboard.setText(AnnotatedString("https://github.com/${s.fullName}"))
+                        toast("URL repository disalin")
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Buka di browser") },
+                    leadingIcon = { Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(17.dp), tint = BlueAccent) },
+                    onClick = {
+                        showRepoMenu = false
+                        runCatching {
+                            ctx.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/${s.fullName}"))
+                            )
+                        }
+                    }
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                 DropdownMenuItem(
                     text = { Text("Hapus repository", color = RedDanger) },
                     leadingIcon = {
@@ -380,6 +545,24 @@ fun RepoScreen(s: Screen.Repo) {
 
         ResponsiveBox {
             LazyColumn(Modifier.fillMaxSize()) {
+                // ===== Kartu ringkasan + aksi cepat ala GitHub =====
+                item {
+                    RepoOverviewCard(
+                        info = repoInfo,
+                        isPrivate = s.isPrivate,
+                        starred = starred,
+                        watching = watching,
+                        starBusy = starBusy,
+                        watchBusy = watchBusy,
+                        forkBusy = forkBusy,
+                        usage = realUsage,
+                        onStar = toggleStar,
+                        onWatch = toggleWatch,
+                        onFork = forkRepo,
+                        onZip = downloadRepo
+                    )
+                }
+                // ===== Toolbar ringkas: branch + file baru + riwayat + README =====
                 item {
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -387,15 +570,38 @@ fun RepoScreen(s: Screen.Repo) {
                     ) {
                         OutlinedButton(
                             onClick = { showBranchMenu = true },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
                         ) {
                             Icon(Icons.Filled.AccountTree, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(Modifier.size(6.dp))
-                            Text(branch, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            Text(
+                                branch,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                fontSize = 12.sp
+                            )
                             Spacer(Modifier.weight(1f))
                             Icon(Icons.Filled.ArrowDropDown, contentDescription = "Pilih branch")
                         }
                         DropdownMenu(expanded = showBranchMenu, onDismissRequest = { showBranchMenu = false }) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "Branch baru dari $branch",
+                                        color = GreenPrimary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.CallSplit, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(17.dp))
+                                },
+                                onClick = {
+                                    showBranchMenu = false
+                                    showCreateBranch = true
+                                }
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                             if (branches.isEmpty()) {
                                 DropdownMenuItem(
                                     text = { Text(branch) },
@@ -411,6 +617,21 @@ fun RepoScreen(s: Screen.Repo) {
                                             fontWeight = if (b.name == branch) FontWeight.Bold else FontWeight.Normal
                                         )
                                     },
+                                    trailingIcon = {
+                                        if (b.name != s.defaultBranch) {
+                                            IconButton(
+                                                onClick = { showBranchMenu = false; deleteBranchTarget = b.name },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Filled.Delete,
+                                                    contentDescription = "Hapus branch ${b.name}",
+                                                    tint = MaterialTheme.colorScheme.error,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                            }
+                                        }
+                                    },
                                     onClick = {
                                         showBranchMenu = false
                                         if (b.name != branch) branch = b.name
@@ -418,51 +639,20 @@ fun RepoScreen(s: Screen.Repo) {
                                 )
                             }
                         }
-                        Spacer(Modifier.size(8.dp))
-                        IconButton(onClick = { openEditor(null) }) {
+                        Spacer(Modifier.size(6.dp))
+                        IconButton(onClick = { openEditor(null) }, modifier = Modifier.size(40.dp)) {
                             Icon(Icons.Filled.Add, contentDescription = "Buat file baru", tint = GreenPrimary)
+                        }
+                        IconButton(onClick = { showHistory = true }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Filled.History, contentDescription = "Riwayat commit", tint = BlueAccent)
+                        }
+                        IconButton(onClick = { showReadme = true }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Filled.Article, contentDescription = "README", tint = GreenPrimary)
                         }
                     }
                 }
                 item {
                     BreadcrumbRow(path, onOpen = { openDir(it) })
-                }
-                item {
-                    // Tombol Riwayat commit & README berdampingan — isi repo tetap fokus ala file manager
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { showHistory = true },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
-                        ) {
-                            Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.size(15.dp), tint = BlueAccent)
-                            Spacer(Modifier.size(6.dp))
-                            Text("Riwayat commit", maxLines = 1, fontSize = 12.sp)
-                        }
-                        OutlinedButton(
-                            onClick = { showReadme = true },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
-                        ) {
-                            Icon(Icons.Filled.Article, contentDescription = null, modifier = Modifier.size(15.dp), tint = GreenPrimary)
-                            Spacer(Modifier.size(6.dp))
-                            Text("README", maxLines = 1, fontSize = 12.sp)
-                        }
-                    }
-                }
-                item {
-                    Button(
-                        onClick = { downloadRepo() },
-                        colors = ButtonDefaults.buttonColors(containerColor = GreenDeep),
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
-                    ) {
-                        Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("Download repository (ZIP)", fontWeight = FontWeight.SemiBold)
-                    }
                 }
                 if ((realUsage ?: 0L) > 0L || (repoInfo?.sizeKb ?: 0L) > 0L) {
                     item {
@@ -696,6 +886,101 @@ fun RepoScreen(s: Screen.Repo) {
                 deleteRepoDialog = false
                 Store.pop() // repo sudah tidak ada — kembali ke Beranda
             }
+        )
+    }
+
+    // ===== Dialog fitur lengkap ala GitHub =====
+
+    if (showIssues) {
+        IssuesDialog(owner = s.owner, name = s.name, onDismiss = { showIssues = false })
+    }
+    if (showPulls) {
+        PullsDialog(owner = s.owner, name = s.name, onDismiss = { showPulls = false })
+    }
+    if (showReleases) {
+        ReleasesDialog(owner = s.owner, name = s.name, onDismiss = { showReleases = false })
+    }
+    if (showEditRepo) {
+        repoInfo?.let { ri ->
+            EditRepoDialog(
+                repo = ri,
+                onDismiss = { showEditRepo = false },
+                onSaved = { upd ->
+                    showEditRepo = false
+                    val oldFullName = ri.fullName
+                    repoInfo = upd
+                    if (upd.name != s.name) {
+                        GitHubApi.invalidateUsage(s.owner, s.name)
+                        // Ganti layar repo di tumpukan dengan nama baru — repo lama tidak ada lagi
+                        Store.stack[Store.stack.lastIndex] = Screen.Repo(
+                            owner = s.owner,
+                            name = upd.name,
+                            fullName = upd.fullName,
+                            defaultBranch = upd.defaultBranch,
+                            isPrivate = upd.isPrivate
+                        )
+                    }
+                    Store.repos.value = Store.repos.value.map {
+                        if (it.fullName == oldFullName) upd else it
+                    }
+                    toast("Perubahan repository tersimpan ✓")
+                }
+            )
+        }
+    }
+    if (showCreateBranch) {
+        CreateBranchDialog(
+            owner = s.owner,
+            name = s.name,
+            fromBranch = branch,
+            onDismiss = { showCreateBranch = false },
+            onCreated = { newName ->
+                showCreateBranch = false
+                toast("Branch $newName dibuat ✓")
+                scope.launch {
+                    branches = runCatching {
+                        withContext(Dispatchers.IO) {
+                            GitHubApi.fetchBranches(Store.token.value, s.owner, s.name)
+                        }
+                    }.getOrDefault(branches)
+                }
+            }
+        )
+    }
+    deleteBranchTarget?.let { bName ->
+        AlertDialog(
+            onDismissRequest = { deleteBranchTarget = null },
+            title = { Text("Hapus branch $bName?", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+            text = {
+                Text(
+                    "Branch dan referensinya dihapus dari GitHub. Commit yang masih dirujuk branch lain tetap aman.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = bName
+                    deleteBranchTarget = null
+                    scope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                GitHubApi.deleteBranch(Store.token.value, s.owner, s.name, target)
+                            }
+                            toast("Branch $target dihapus ✓")
+                            if (target == branch) branch = s.defaultBranch
+                            branches = runCatching {
+                                withContext(Dispatchers.IO) {
+                                    GitHubApi.fetchBranches(Store.token.value, s.owner, s.name)
+                                }
+                            }.getOrDefault(branches)
+                        } catch (e: Exception) {
+                            toast("Gagal: ${GitHubApi.humanError(e)}")
+                        }
+                    }
+                }) { Text("Hapus", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deleteBranchTarget = null }) { Text("Batal") } }
         )
     }
 }
@@ -1336,4 +1621,133 @@ private fun MoveDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } }
     )
+}
+
+// ============================================================
+// ============ KARTU RINGKASAN + AKSI CEPAT REPO =============
+// ============================================================
+
+/** Kartu ringkasan repository: deskripsi, statistik, dan baris aksi cepat ala GitHub. */
+@Composable
+private fun RepoOverviewCard(
+    info: GhRepo?,
+    isPrivate: Boolean,
+    starred: Boolean,
+    watching: Boolean,
+    starBusy: Boolean,
+    watchBusy: Boolean,
+    forkBusy: Boolean,
+    usage: Long?,
+    onStar: () -> Unit,
+    onWatch: () -> Unit,
+    onFork: () -> Unit,
+    onZip: () -> Unit
+) {
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            if (!info?.description.isNullOrBlank()) {
+                Text(
+                    info!!.description!!,
+                    fontSize = 12.5.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Star, contentDescription = null, modifier = Modifier.size(13.dp), tint = GrayMuted)
+                Spacer(Modifier.size(4.dp))
+                Text("${info?.stars ?: 0}", fontSize = 11.5.sp, color = GrayMuted)
+                Spacer(Modifier.size(10.dp))
+                Icon(Icons.Filled.CallSplit, contentDescription = null, modifier = Modifier.size(13.dp), tint = GrayMuted)
+                Spacer(Modifier.size(4.dp))
+                Text("${info?.forks ?: 0}", fontSize = 11.5.sp, color = GrayMuted)
+                Spacer(Modifier.size(10.dp))
+                Icon(Icons.Filled.BugReport, contentDescription = null, modifier = Modifier.size(13.dp), tint = GrayMuted)
+                Spacer(Modifier.size(4.dp))
+                Text("${info?.issues ?: 0}", fontSize = 11.5.sp, color = GrayMuted)
+                Spacer(Modifier.size(10.dp))
+                Icon(Icons.Filled.Visibility, contentDescription = null, modifier = Modifier.size(13.dp), tint = GrayMuted)
+                Spacer(Modifier.size(4.dp))
+                Text("${info?.watchers ?: 0}", fontSize = 11.5.sp, color = GrayMuted)
+                Spacer(Modifier.weight(1f))
+                usage?.let {
+                    Text(
+                        formatBytes(it),
+                        fontSize = 11.5.sp,
+                        color = GrayMuted,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                QuickAction(
+                    icon = if (starred) Icons.Filled.Star else Icons.Filled.StarBorder,
+                    label = if (starred) "Disukai" else "Star",
+                    tint = if (starred) YellowWarn else GrayMuted,
+                    enabled = !starBusy,
+                    onClick = onStar,
+                    modifier = Modifier.weight(1f)
+                )
+                QuickAction(
+                    icon = Icons.Filled.CallSplit,
+                    label = "Fork",
+                    tint = BlueAccent,
+                    enabled = !forkBusy,
+                    onClick = onFork,
+                    modifier = Modifier.weight(1f)
+                )
+                QuickAction(
+                    icon = Icons.Filled.Visibility,
+                    label = if (watching) "Dipantau" else "Pantau",
+                    tint = if (watching) BlueAccent else GrayMuted,
+                    enabled = !watchBusy,
+                    onClick = onWatch,
+                    modifier = Modifier.weight(1f)
+                )
+                QuickAction(
+                    icon = Icons.Filled.Download,
+                    label = "Unduh ZIP",
+                    tint = GreenPrimary,
+                    enabled = true,
+                    onClick = onZip,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+/** Tombol aksi kecil: ikon di atas label — ringkas, tidak memakan ruang vertikal. */
+@Composable
+private fun QuickAction(
+    icon: ImageVector,
+    label: String,
+    tint: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        shape = RoundedCornerShape(10.dp),
+        modifier = modifier
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(vertical = 7.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.height(2.dp))
+            Text(
+                label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface else GrayMuted
+            )
+        }
+    }
 }

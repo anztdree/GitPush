@@ -66,13 +66,16 @@ fun AuthScreen() {
     ) {
         Spacer(Modifier.height(56.dp))
         Box(
-            Modifier.size(92.dp).background(MaterialTheme.colorScheme.surface, RoundedCornerShape(24.dp)),
+            Modifier.size(92.dp).background(
+                androidx.compose.ui.graphics.Brush.linearGradient(listOf(GreenDeep, GreenPrimary)),
+                RoundedCornerShape(26.dp)
+            ),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 Icons.Filled.Upload,
                 contentDescription = "Logo GitPush",
-                tint = GreenPrimary,
+                tint = androidx.compose.ui.graphics.Color.White,
                 modifier = Modifier.size(46.dp)
             )
         }

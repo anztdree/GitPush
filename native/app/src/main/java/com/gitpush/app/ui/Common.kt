@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -454,6 +455,90 @@ fun OperationOverlay() {
                 }
             }
         }
+    }
+}
+
+// ---------- Komponen desain bersama (tipografi & tata letak konsisten) ----------
+
+/** Label seksi huruf kapital dengan jarak huruf — identitas tata letak GitPush. */
+@Composable
+fun SectionLabel2(text: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null) {
+    Row(
+        modifier.fillMaxWidth().padding(start = 18.dp, end = 12.dp, top = 20.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text.uppercase(),
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.sp,
+            letterSpacing = 1.1.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        trailing?.invoke()
+    }
+}
+
+/** Header layar besar: judul display + subjudul + aksi di kanan. */
+@Composable
+fun AppHeader(
+    title: String,
+    subtitle: String? = null,
+    actions: (@Composable androidx.compose.foundation.layout.RowScope.() -> Unit)? = null
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 14.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 23.sp,
+                letterSpacing = (-0.5).sp
+            )
+            if (subtitle != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    subtitle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+        }
+        actions?.invoke(this)
+    }
+}
+
+/** Pil statistik: angka tebal + label kecil (profil, ringkasan repo). */
+@Composable
+fun StatPill(value: String, label: String, onClick: (() -> Unit)? = null) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(9.dp),
+        onClick = onClick ?: {},
+        enabled = onClick != null
+    ) {
+        Row(
+            Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(value, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Spacer(Modifier.width(4.dp))
+            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.5.sp)
+        }
+    }
+}
+
+/** Chip kecil ikon+teks untuk meta (language, ukuran, waktu). */
+@Composable
+fun MetaChip(icon: ImageVector, text: String, tint: Color = GrayMuted) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(12.dp))
+        Spacer(Modifier.width(3.dp))
+        Text(text, color = GrayMuted, fontSize = 11.sp)
     }
 }
 

@@ -10,7 +10,13 @@ data class GhUser(
     val bio: String?,
     val followers: Int,
     val following: Int,
-    val publicRepos: Int
+    val publicRepos: Int,
+    // Field tambahan untuk profil ala GitHub (boleh null — dipakai edit profil)
+    val company: String? = null,
+    val location: String? = null,
+    val blog: String? = null,
+    val email: String? = null,
+    val createdAt: String = ""
 )
 
 data class GhRepo(
@@ -27,7 +33,9 @@ data class GhRepo(
     val issues: Int,
     val defaultBranch: String,
     val updatedAt: String,
-    val sizeKb: Long = 0 // ukuran repository (KB) dari API — untuk kuota 2 GB
+    val sizeKb: Long = 0, // ukuran repository (KB) dari API — untuk kuota 2 GB
+    val homepage: String? = null,
+    val watchers: Int = 0
 )
 
 data class GhNode(
@@ -83,6 +91,93 @@ data class HistoryEntry(
     val label: String,
     val repo: String,
     val time: Long
+)
+
+// ================= Model fitur baru (ala GitHub lengkap) =================
+
+data class GhIssue(
+    val number: Int,
+    val title: String,
+    val body: String?,
+    val state: String, // open | closed
+    val author: String,
+    val avatarUrl: String?,
+    val comments: Int,
+    val createdAt: String,
+    val updatedAt: String,
+    val labels: List<String> = emptyList(),
+    val isPr: Boolean = false // item daftar issues yang sebenarnya PR
+)
+
+data class GhPull(
+    val number: Int,
+    val title: String,
+    val body: String?,
+    val state: String,
+    val author: String,
+    val avatarUrl: String?,
+    val createdAt: String,
+    val headRef: String,
+    val baseRef: String,
+    val mergeable: Boolean?,
+    val draft: Boolean
+)
+
+data class GhComment(
+    val author: String,
+    val avatarUrl: String?,
+    val body: String,
+    val createdAt: String
+)
+
+data class GhRelease(
+    val name: String,
+    val tagName: String,
+    val body: String?,
+    val publishedAt: String,
+    val assetCount: Int,
+    val isPrerelease: Boolean
+)
+
+data class GhEmail(
+    val email: String,
+    val primary: Boolean,
+    val verified: Boolean,
+    val visibility: String?
+)
+
+data class GhKey(
+    val id: Long,
+    val title: String,
+    val key: String,
+    val createdAt: String
+)
+
+data class GhGist(
+    val id: String,
+    val description: String?,
+    val firstFileName: String?,
+    val fileCount: Int,
+    val updatedAt: String,
+    val isPublic: Boolean
+)
+
+data class GhOrg(
+    val login: String,
+    val avatarUrl: String,
+    val description: String?
+)
+
+data class GhUserLite(
+    val login: String,
+    val avatarUrl: String
+)
+
+data class GhEvent(
+    val type: String,
+    val repo: String,
+    val createdAt: String,
+    val detail: String // teks ringkas dalam Bahasa Indonesia
 )
 
 /**

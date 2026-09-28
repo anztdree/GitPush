@@ -5,6 +5,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,16 +17,21 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderShared
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -36,6 +42,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,7 +61,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -60,8 +68,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gitpush.app.data.GhException
-import com.gitpush.app.data.GitHubApi
 import com.gitpush.app.data.GhRepo
+import com.gitpush.app.data.GitHubApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -69,17 +77,28 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
+private enum class SearchMode { MINE, GLOBAL }
+
 @Composable
 fun HomeScreen() {
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(Store.repos.value.isEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
+    var searchMode by remember { mutableStateOf(SearchMode.MINE) }
+    var filter by remember { mutableStateOf("all") } // all | public | private
     var showCreate by remember { mutableStateOf(false) }
     // Pemakaian riil per repository (termasuk objek Git LFS): fullName → byte (-1 = gagal hitung)
     var usageMap by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
-    // Repo yang sedang diminta dihapus (tekan lama kartu)
+    // Repo yang sedang diminta aksi (menu kartu)
     var deleteTarget by remember { mutableStateOf<GhRepo?>(null) }
+    var forkTarget by remember { mutableStateOf<GhRepo?>(null) }
+    var forkBusy by remember { mutableStateOf(false) }
+    // Hasil pencarian global
+    var globalResults by remember { mutableStateOf<List<GhRepo>?>(null) }
+    var globalSearching by remember { mutableStateOf(false) }
+
+    val ctx = LocalContext.current
 
     val computeUsages: (Boolean) -> Unit = { force ->
         val repos = Store.repos.value
@@ -124,55 +143,133 @@ fun HomeScreen() {
     }
     LaunchedEffect(Unit) { load(false) }
 
-    val q = query.trim().lowercase()
-    val filtered = if (q.isEmpty()) Store.repos.value else Store.repos.value.filter {
-        it.name.lowercase().contains(q) ||
-            (it.description?.lowercase()?.contains(q) == true) ||
-            it.fullName.lowercase().contains(q)
+    // Pencarian global: debounce sederhana 500 ms
+    val q = query.trim()
+    LaunchedEffect(q, searchMode) {
+        if (searchMode == SearchMode.GLOBAL && q.length >= 2) {
+            globalSearching = true
+            kotlinx.coroutines.delay(500)
+            try {
+                globalResults = withContext(Dispatchers.IO) {
+                    GitHubApi.searchRepos(Store.token.value, q)
+                }
+            } catch (e: Exception) {
+                globalResults = emptyList()
+            }
+            globalSearching = false
+        } else {
+            globalResults = null
+            globalSearching = false
+        }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("GitPush", fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                val allKnown = Store.repos.value.isNotEmpty() &&
-                    Store.repos.value.all { (usageMap[it.fullName] ?: -1L) >= 0L }
-                Text(
-                    if (allKnown) {
-                        val total = Store.repos.value.sumOf { usageMap[it.fullName] ?: 0L }
-                        "${Store.repos.value.size} repository • total ${formatBytes(total)}"
-                    } else "${Store.repos.value.size} repository",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp
-                )
-            }
-            IconButton(onClick = { load(true) }) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Segarkan")
-            }
-            IconButton(onClick = { showCreate = true }) {
-                Icon(Icons.Filled.Add, contentDescription = "Buat repository", tint = GreenPrimary)
-            }
+    val filtered = when {
+        searchMode == SearchMode.GLOBAL -> globalResults ?: emptyList()
+        q.isEmpty() -> Store.repos.value
+        else -> Store.repos.value.filter {
+            it.name.lowercase().contains(q.lowercase()) ||
+                (it.description?.lowercase()?.contains(q.lowercase()) == true) ||
+                it.fullName.lowercase().contains(q.lowercase())
         }
+    }.let { base ->
+        when (filter) {
+            "public" -> base.filter { !it.isPrivate }
+            "private" -> base.filter { it.isPrivate }
+            else -> base
+        }
+    }
+
+    val totalKnown = Store.repos.value.isNotEmpty() &&
+        Store.repos.value.all { (usageMap[it.fullName] ?: -1L) >= 0L }
+    val totalBytes = Store.repos.value.sumOf { usageMap[it.fullName] ?: 0L }
+
+    Column(Modifier.fillMaxSize()) {
+        AppHeader(
+            title = "Beranda",
+            subtitle = when {
+                searchMode == SearchMode.GLOBAL -> "Pencarian global GitHub"
+                totalKnown -> "${Store.repos.value.size} repository • total ${formatBytes(totalBytes)}"
+                else -> "${Store.repos.value.size} repository • penyimpanan awan Anda"
+            },
+            actions = {
+                IconButton(onClick = { load(true) }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = "Segarkan")
+                }
+                IconButton(onClick = { showCreate = true }) {
+                    Icon(Icons.Filled.Add, contentDescription = "Buat repository", tint = GreenPrimary)
+                }
+            }
+        )
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Cari repository…") },
+            placeholder = {
+                Text(if (searchMode == SearchMode.GLOBAL) "Cari di seluruh GitHub…" else "Cari repository saya…")
+            },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { query = "" }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Bersihkan", Modifier.size(18.dp))
+                    }
+                }
+            },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
         )
-        Spacer(Modifier.height(4.dp))
+        Row(
+            Modifier.fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = searchMode == SearchMode.MINE,
+                onClick = { searchMode = SearchMode.MINE },
+                label = { Text("Repo saya") }
+            )
+            FilterChip(
+                selected = searchMode == SearchMode.GLOBAL,
+                onClick = { searchMode = SearchMode.GLOBAL },
+                label = { Text("Semua GitHub") }
+            )
+            if (searchMode == SearchMode.MINE) {
+                Spacer(Modifier.width(6.dp))
+                FilterChip(
+                    selected = filter == "all",
+                    onClick = { filter = "all" },
+                    label = { Text("Semua") }
+                )
+                FilterChip(
+                    selected = filter == "public",
+                    onClick = { filter = "public" },
+                    label = { Text("Publik") }
+                )
+                FilterChip(
+                    selected = filter == "private",
+                    onClick = { filter = "private" },
+                    label = { Text("Privat") }
+                )
+            }
+        }
         when {
-            loading -> Loading()
-            error != null -> ErrorCard(error!!) { load(true) }
+            searchMode == SearchMode.GLOBAL && globalSearching -> Loading("Mencari di GitHub…")
+            loading && searchMode == SearchMode.MINE -> Loading()
+            error != null && searchMode == SearchMode.MINE -> ErrorCard(error!!) { load(true) }
             filtered.isEmpty() -> EmptyState(
                 Icons.Filled.Folder,
-                if (query.isBlank()) "Belum ada repository" else "Tidak ditemukan",
-                if (query.isBlank()) "Tekan + di kanan atas untuk membuat repository pertama Anda"
-                    else "Coba kata kunci lain"
+                when {
+                    searchMode == SearchMode.GLOBAL && q.length < 2 -> "Ketik minimal 2 huruf"
+                    searchMode == SearchMode.GLOBAL -> "Tidak ditemukan di GitHub"
+                    query.isBlank() -> "Belum ada repository"
+                    else -> "Tidak ditemukan"
+                },
+                when {
+                    searchMode == SearchMode.GLOBAL && q.length < 2 -> "Pencarian global mencari repository publik di seluruh GitHub"
+                    searchMode == SearchMode.GLOBAL -> "Coba kata kunci lain"
+                    query.isBlank() -> "Tekan + di kanan atas untuk membuat repository pertama Anda"
+                    else -> "Coba kata kunci lain"
+                }
             )
             else -> ResponsiveBox {
                 LazyVerticalGrid(
@@ -181,8 +278,35 @@ fun HomeScreen() {
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filtered, key = { it.id }) { repo ->
-                        RepoCard(repo, usageMap[repo.fullName], onLongClick = { deleteTarget = repo })
+                    items(filtered, key = { "${it.id}-${it.fullName}" }) { repo ->
+                        RepoCard(
+                            repo = repo,
+                            usage = usageMap[repo.fullName],
+                            onLongClick = { deleteTarget = repo },
+                            onStar = {
+                                scope.launch {
+                                    try {
+                                        val starred = withContext(Dispatchers.IO) {
+                                            GitHubApi.isStarred(Store.token.value, repo.owner, repo.name)
+                                        }
+                                        withContext(Dispatchers.IO) {
+                                            GitHubApi.setStarred(Store.token.value, repo.owner, repo.name, !starred)
+                                        }
+                                        Toast.makeText(
+                                            ctx,
+                                            if (!starred) "Repo ini sekarang Anda sukai ★" else "Bintang dilepas",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } catch (e: Exception) {
+                                        Toast.makeText(ctx, "Gagal: ${GitHubApi.humanError(e)}", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            onFork = {
+                                forkTarget = repo
+                            },
+                            onDelete = { deleteTarget = repo }
+                        )
                     }
                 }
             }
@@ -201,11 +325,61 @@ fun HomeScreen() {
             onDeleted = { deleteTarget = null }
         )
     }
+
+    forkTarget?.let { repo ->
+        AlertDialog(
+            onDismissRequest = { if (!forkBusy) forkTarget = null },
+            title = { Text("Fork repository?", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+            text = {
+                Text(
+                    "Salinan \"${repo.fullName}\" akan dibuat ke akun Anda. GitHub memproses fork beberapa saat setelah permintaan dikirim.",
+                    fontSize = 13.sp, lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    enabled = !forkBusy,
+                    onClick = {
+                        forkBusy = true
+                        scope.launch {
+                            try {
+                                val forked = withContext(Dispatchers.IO) {
+                                    GitHubApi.forkRepo(Store.token.value, repo.owner, repo.name)
+                                }
+                                Store.log("repo", "Fork ${repo.name}", forked.fullName)
+                                Toast.makeText(ctx, "Fork dibuat: ${forked.fullName} ✓", Toast.LENGTH_LONG).show()
+                                forkTarget = null
+                                load(true)
+                            } catch (e: Exception) {
+                                Toast.makeText(ctx, "Gagal: ${GitHubApi.humanError(e)}", Toast.LENGTH_LONG).show()
+                            } finally {
+                                forkBusy = false
+                            }
+                        }
+                    }
+                ) {
+                    if (forkBusy) CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    else Text("Fork")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { forkTarget = null }, enabled = !forkBusy) { Text("Batal") }
+            }
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RepoCard(repo: GhRepo, usage: Long?, onLongClick: () -> Unit) {
+private fun RepoCard(
+    repo: GhRepo,
+    usage: Long?,
+    onLongClick: () -> Unit,
+    onStar: () -> Unit,
+    onFork: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var menu by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(16.dp)
     Card(
         shape = shape,
@@ -226,7 +400,7 @@ private fun RepoCard(repo: GhRepo, usage: Long?, onLongClick: () -> Unit) {
             onLongClick = onLongClick
         ).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), shape)
     ) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.Top) {
+        Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 14.dp, bottom = 14.dp, end = 4.dp), verticalAlignment = Alignment.Top) {
             // Badge ikon repo (bentuk kubah folder berwarna — identitas file manager)
             Box(
                 Modifier.size(42.dp).background(
@@ -242,7 +416,7 @@ private fun RepoCard(repo: GhRepo, usage: Long?, onLongClick: () -> Unit) {
                     modifier = Modifier.size(22.dp)
                 )
             }
-            Spacer(Modifier.size(12.dp))
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -252,9 +426,9 @@ private fun RepoCard(repo: GhRepo, usage: Long?, onLongClick: () -> Unit) {
                         color = BlueAccent,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f, fill = false)
                     )
-                    Spacer(Modifier.size(8.dp))
+                    Spacer(Modifier.width(6.dp))
                     Icon(
                         if (repo.isPrivate) Icons.Filled.Lock else Icons.Filled.Public,
                         contentDescription = if (repo.isPrivate) "Private" else "Public",
@@ -276,13 +450,13 @@ private fun RepoCard(repo: GhRepo, usage: Long?, onLongClick: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(9.dp).background(langColor(repo.language), CircleShape))
-                    Spacer(Modifier.size(5.dp))
+                    Spacer(Modifier.width(5.dp))
                     Text(repo.language ?: "-", color = GrayMuted, fontSize = 11.sp)
-                    Spacer(Modifier.size(12.dp))
+                    Spacer(Modifier.width(10.dp))
                     Icon(Icons.Filled.Star, contentDescription = null, tint = GrayMuted, modifier = Modifier.size(13.dp))
-                    Spacer(Modifier.size(3.dp))
+                    Spacer(Modifier.width(3.dp))
                     Text("${repo.stars}", color = GrayMuted, fontSize = 11.sp)
-                    Spacer(Modifier.size(12.dp))
+                    Spacer(Modifier.width(10.dp))
                     // Ukuran riil isi repository (termasuk Git LFS) — field "size" API GitHub
                     // tidak menghitung LFS sehingga bisa jauh lebih kecil dari kenyataan
                     Text(
@@ -297,6 +471,28 @@ private fun RepoCard(repo: GhRepo, usage: Long?, onLongClick: () -> Unit) {
                     )
                     Spacer(Modifier.weight(1f))
                     Text(timeAgo(repo.updatedAt), color = GrayMuted, fontSize = 11.sp)
+                }
+            }
+            Box {
+                IconButton(onClick = { menu = true }, modifier = Modifier.size(34.dp)) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Menu ${repo.name}", tint = GrayMuted, modifier = Modifier.size(18.dp))
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Sukai repo (star)") },
+                        leadingIcon = { Icon(Icons.Filled.Star, contentDescription = null, modifier = Modifier.size(17.dp), tint = YellowWarn) },
+                        onClick = { menu = false; onStar() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Fork ke akun saya") },
+                        leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(17.dp), tint = BlueAccent) },
+                        onClick = { menu = false; onFork() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Hapus repository", color = RedDanger) },
+                        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(17.dp), tint = RedDanger) },
+                        onClick = { menu = false; onDelete() }
+                    )
                 }
             }
         }
@@ -400,7 +596,7 @@ private fun CreateRepoDialog(onDismiss: () -> Unit, onCreated: () -> Unit) {
 
 /**
  * Dialog hapus repository PERMANEN — wajib mengetik nama repo sebagai konfirmasi.
- * Dipakai di Beranda (tekan lama kartu) dan di menu kebab layar repository.
+ * Dipakai di Beranda (tekan lama kartu / menu) dan di menu kebab layar repository.
  */
 @Composable
 fun DeleteRepoDialog(owner: String, name: String, onDismiss: () -> Unit, onDeleted: () -> Unit) {
