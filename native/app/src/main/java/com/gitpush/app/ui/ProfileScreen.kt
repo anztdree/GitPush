@@ -185,7 +185,7 @@ fun ProfileScreen() {
                     Spacer(Modifier.width(8.dp))
                     Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(5.dp)) {
                         Text(
-                            "v1.3 NATIVE",
+                            "v1.4 NATIVE",
                             fontSize = 10.sp,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )

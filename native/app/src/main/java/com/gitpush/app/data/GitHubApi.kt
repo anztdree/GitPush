@@ -309,7 +309,9 @@ object GitHubApi {
         withContext(Dispatchers.IO) {
             val o = call(token, "GET", "/repos/$owner/$repo/contents/${Uri.encode(path, "/")}?ref=${Uri.encode(ref)}")
                 ?: throw GhException("File tidak ditemukan")
-            val b64 = if (o.isNull("content")) null else o.optString("content")
+            // PENTING: untuk file > 1 MB Contents API mengembalikan content = "" (string kosong,
+            // BUKAN null) — dulu ini ter-decode jadi 0 byte dan tersimpan sebagai file 0 KB.
+            val b64 = if (o.isNull("content")) null else o.optString("content").takeIf { it.isNotBlank() }
             var size = o.optLong("size")
             var isLfs = false
             if (b64 != null && size in 120..160) {
@@ -495,6 +497,22 @@ object GitHubApi {
         dl.optJSONObject("header")?.let { h -> h.keys().forEach { k -> headers[k] = h.optString(k) } }
         href to headers
     }
+
+    /** Stream isi blob MENTAH (Accept: vnd.github.raw) langsung ke OutputStream — hemat RAM, aman file besar. */
+    private suspend fun streamBlobRaw(token: String, owner: String, repo: String, sha: String, out: OutputStream): Unit =
+        withContext(Dispatchers.IO) {
+            val b = Request.Builder().url("$API/repos/$owner/$repo/git/blobs/$sha")
+                .header("Accept", "application/vnd.github.raw")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("User-Agent", "GitPush-Android")
+                .header("Authorization", "Bearer $token")
+                .get()
+            http.newCall(b.build()).execute().use { r ->
+                if (!r.isSuccessful) throw GhException("Gagal mengunduh blob (HTTP ${r.code})")
+                r.body?.byteStream()?.use { src -> src.copyTo(out, 256 * 1024) }
+                    ?: throw GhException("Stream blob kosong")
+            }
+        }
 
     /** Unduh konten ASLI objek LFS langsung ke OutputStream (streaming, hemat RAM). */
     suspend fun streamLfsContent(
@@ -1107,19 +1125,36 @@ object GitHubApi {
         context: Context, token: String, owner: String, repo: String, node: GhNode, ref: String
     ): String = withContext(Dispatchers.IO) {
         val meta = fetchFileMeta(token, owner, repo, node.path, ref)
-        val bytes = if (meta.contentB64 != null) {
-            Base64.decode(meta.contentB64, Base64.DEFAULT)
-        } else {
-            fetchBlobBytes(token, owner, repo, meta.sha)
-        }
-        val ptr = lfsPointerInfo(String(bytes))
-        if (ptr != null) {
-            val (oid, realSize) = ptr
-            saveToDownloads(context, node.name, "application/octet-stream") { out ->
-                streamLfsContent(token, owner, repo, oid, realSize, out)
+
+        // Deteksi pointer LFS: (1) sudah terdeteksi fetchFileMeta (isLfs, pointer ±130 B selalu
+        // dikembalikan penuh oleh Contents API), atau (2) file kecil → cek murah dari bytes.
+        val ptr: Pair<String, Long>? = if (meta.isLfs) {
+            val ptxt = if (!meta.contentB64.isNullOrEmpty())
+                String(Base64.decode(meta.contentB64, Base64.DEFAULT))
+            else String(fetchBlobBytes(token, owner, repo, meta.sha))
+            lfsPointerInfo(ptxt)
+        } else if (meta.size in 1..1024) {
+            val bytes = if (!meta.contentB64.isNullOrEmpty())
+                Base64.decode(meta.contentB64, Base64.DEFAULT)
+            else fetchBlobBytes(token, owner, repo, meta.sha)
+            lfsPointerInfo(String(bytes))
+        } else null
+
+        when {
+            // Konten ASLI dari penyimpanan Git LFS
+            ptr != null -> saveToDownloads(context, node.name, "application/octet-stream") { out ->
+                streamLfsContent(token, owner, repo, ptr.first, ptr.second, out)
             }
-        } else {
-            saveToDownloads(context, node.name, "application/octet-stream") { it.write(bytes) }
+            // File ≥ 1 MB: Contents API TIDAK mengirim isi (content="") — stream mentah dari
+            // Git Blobs API langsung ke Download tanpa memuat seluruh file ke RAM.
+            meta.contentB64.isNullOrEmpty() -> saveToDownloads(context, node.name, "application/octet-stream") { out ->
+                streamBlobRaw(token, owner, repo, meta.sha, out)
+            }
+            // File kecil biasa — isi sudah utuh di meta
+            else -> {
+                val bytes = Base64.decode(meta.contentB64, Base64.DEFAULT)
+                saveToDownloads(context, node.name, "application/octet-stream") { it.write(bytes) }
+            }
         }
     }
 
@@ -1157,7 +1192,7 @@ object GitHubApi {
                     zip.putNextEntry(ZipEntry(n.path))
                     val p = ptrs[n.sha]
                     if (p != null) streamLfsContent(token, owner, repo, p.first, p.second, zip)
-                    else zip.write(fetchBlobBytes(token, owner, repo, n.sha))
+                    else streamBlobRaw(token, owner, repo, n.sha, zip)
                     zip.closeEntry()
                     onProgress(i + 1, blobs.size)
                 }
