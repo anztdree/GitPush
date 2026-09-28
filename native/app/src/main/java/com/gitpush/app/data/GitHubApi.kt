@@ -122,7 +122,11 @@ object GitHubApi {
         if (method == "PUT") b.put(body) else b.post(body)
         try {
             http.newCall(b.build()).execute().use { r ->
-                val text = r.body?.string().orEmpty().take(800)
+                // PENTING: body HARUS dibaca PENUH. Dulu dipotong .take(800) — padahal respons
+                // batch Git LFS berisi URL presigned S3 + header AWS SigV4 yang panjangnya
+                // lebih dari 800 karakter, sehingga JSONObject gagal dengan error
+                // "Terminated string at character 800" dan upload file besar selalu gagal.
+                val text = r.body?.string().orEmpty()
                 val ra = r.header("Retry-After")?.toLongOrNull()?.times(1000) ?: 0L
                 Triple(r.code, text, ra)
             }
@@ -143,7 +147,11 @@ object GitHubApi {
             code == 422 -> "Data tidak valid (422) — cek nama/isi atau branch sudah berubah"
             code == 499 -> "Dibatalkan"
             msg.contains("Unable to resolve host", true) -> "Tidak ada koneksi internet"
-            else -> msg.ifEmpty { "Terjadi kesalahan" }
+            // Pesan JSON mentah (mis. "Terminated string at character 800 of {...}") TIDAK boleh
+            // dibiarkan menggenangi layar — tampilkan ringkasan yang bisa dipahami.
+            msg.contains("Terminated string", true) || msg.contains("Unterminated string", true) ||
+                msg.contains("JSONException", true) -> "Respons GitHub terpotong — koneksi tidak stabil, silakan coba lagi"
+            else -> msg.ifEmpty { "Terjadi kesalahan" }.let { if (it.length > 180) it.take(180) + "…" else it }
         }
     }
 
@@ -882,7 +890,9 @@ object GitHubApi {
                     return@withContext JSONObject(text).optString("sha")
                 }
                 val secondary = code == 403 && (ra > 0 || text.contains("secondary", true))
-                val retryable = code in 500..599 || code == 429 || secondary
+                // code == 0: koneksi putus saat mengirim body besar — blob bersifat content-addressed
+                // (idempotent) sehingga aman diulang dari awal.
+                val retryable = code in 500..599 || code == 429 || code == 0 || secondary
                 if (!retryable || attempt >= 5) throw GhException("HTTP $code: ${text.take(160)}", code, ra)
                 if (code == 403 || code == 429) throttle.slowDown(700)
                 delay(if (ra > 0) ra.coerceAtMost(60_000) else 1000L * attempt)
@@ -918,33 +928,46 @@ object GitHubApi {
             .put("hash_algo", "sha256")
             .put("objects", JSONArray().put(JSONObject().put("oid", oid).put("size", size)))
 
-        var code = 0
-        var text = ""
+        // Batch dengan retry tangguh: koneksi putus (code 0), server error 5xx/429,
+        // dan respons terpotong (JSON rusak karena jaringan seluler flaky) semuanya diulang.
+        var obj: JSONObject? = null
         var attempt = 0
-        while (true) {
+        while (obj == null) {
             if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
             attempt++
-            val res = callStreamed(
-                "https://github.com/$owner/$repo.git/info/lfs/objects/batch", "POST", "",
-                batchBody.toString().toRequestBody(lfsMedia),
-                mapOf("Accept" to "application/vnd.git-lfs+json", "Authorization" to "Basic $basic")
-            )
-            code = res.first
-            text = res.second
-            if (code in 200..299) break
-            if ((code in 500..599 || code == 0) && attempt < 3) {
-                delay(1000L * attempt)
-                continue
+            var retryable = false
+            try {
+                val res = callStreamed(
+                    "https://github.com/$owner/$repo.git/info/lfs/objects/batch", "POST", "",
+                    batchBody.toString().toRequestBody(lfsMedia),
+                    mapOf("Accept" to "application/vnd.git-lfs+json", "Authorization" to "Basic $basic")
+                )
+                when (res.first) {
+                    in 200..299 -> obj = JSONObject(res.second).optJSONArray("objects")?.optJSONObject(0)
+                    429, 500, 502, 503, 504 -> retryable = true
+                    else -> throw GhException("Git LFS ditolak (HTTP ${res.first}): ${res.second.take(140)}", res.first)
+                }
+            } catch (e: GhException) {
+                if (e.code != 0) throw e
+                retryable = true // koneksi gagal
+            } catch (e: Exception) {
+                retryable = true // JSON terpotong/rusak — jaringan tidak stabil
             }
-            throw GhException("Git LFS ditolak (HTTP $code): ${text.take(140)}", code)
+            if (obj == null) {
+                if (attempt >= 3) {
+                    throw GhException(
+                        if (retryable) "Koneksi Git LFS tidak stabil — coba lagi"
+                        else "Respons Git LFS tidak valid"
+                    )
+                }
+                delay(700L * attempt)
+            }
         }
-
-        val obj = JSONObject(text).optJSONArray("objects")?.optJSONObject(0)
-            ?: throw GhException("Respons Git LFS tidak valid")
-        obj.optJSONObject("error")?.let { e ->
+        val batchObj = obj ?: throw GhException("Respons Git LFS tidak valid")
+        batchObj.optJSONObject("error")?.let { e ->
             throw GhException("Git LFS: ${e.optString("message", "gagal")}", e.optInt("code"))
         }
-        val actions = obj.optJSONObject("actions")
+        val actions = batchObj.optJSONObject("actions")
             ?: throw GhException("Git LFS tidak tersedia untuk repository ini (kuota/disabled)")
 
         // --- PUT ke storage (URL presigned; JANGAN tambah header auth sendiri) ---
@@ -953,18 +976,22 @@ object GitHubApi {
         up.optJSONObject("header")?.let { h ->
             h.keys().forEach { k -> upHeaders[k] = h.optString(k) }
         }
-        var putCode = 0
         var putAttempt = 0
         while (true) {
             if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
             putAttempt++
             onSent(0)
             val body = streamedRawBody(f, resolver, size, hooks.isCancelled, onSent)
-            val (c, _) = callStreamed(up.optString("href"), "PUT", "", body, upHeaders)
-            putCode = c
+            // PUT file besar rawan koneksi putus di tengah jalan — GhException(code 0) diulang.
+            val putCode = try {
+                callStreamed(up.optString("href"), "PUT", "", body, upHeaders).first
+            } catch (e: GhException) {
+                if (e.code != 0) throw e
+                0
+            }
             if (putCode in 200..299) break
-            if (putAttempt < 2) continue
-            throw GhException("Upload objek LFS gagal (HTTP $putCode)")
+            if (putAttempt >= 3) throw GhException("Upload objek LFS gagal (HTTP $putCode)")
+            delay(1000L * putAttempt)
         }
 
         // --- Verify (opsional; header persis dari respons) ---
