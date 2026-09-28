@@ -155,6 +155,7 @@ object UploadManager {
                 skipped = res.skipped
                 filesDone = res.uploaded
                 phase = "done"
+                GitHubApi.invalidateUsage(owner, repo) // kuota Beranda/Upload dihitung ulang
                 Store.log("upload", "Upload ${res.uploaded} file (1 commit)", repoFullName)
             } catch (e: CancellationException) {
                 elapsedMs = System.currentTimeMillis() - started

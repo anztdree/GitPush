@@ -57,7 +57,10 @@ import androidx.compose.ui.unit.sp
 import com.gitpush.app.data.GitHubApi
 import com.gitpush.app.data.GhRepo
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -67,6 +70,31 @@ fun HomeScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var showCreate by remember { mutableStateOf(false) }
+    // Pemakaian riil per repository (termasuk objek Git LFS): fullName → byte (-1 = gagal hitung)
+    var usageMap by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+
+    val computeUsages: (Boolean) -> Unit = { force ->
+        val repos = Store.repos.value
+        if (repos.isNotEmpty()) {
+            scope.launch {
+                val sem = Semaphore(3)
+                coroutineScope {
+                    repos.forEach { r ->
+                        launch {
+                            sem.withPermit {
+                                val v = runCatching {
+                                    GitHubApi.fetchRepoUsage(
+                                        Store.token.value, r.owner, r.name, r.defaultBranch, force
+                                    )
+                                }.getOrDefault(-1L)
+                                usageMap = usageMap + (r.fullName to v)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     val load: (Boolean) -> Unit = { force ->
         scope.launch {
@@ -83,6 +111,7 @@ fun HomeScreen() {
                     loading = false
                 }
             }
+            computeUsages(force)
         }
     }
     LaunchedEffect(Unit) { load(false) }
@@ -101,8 +130,13 @@ fun HomeScreen() {
         ) {
             Column(Modifier.weight(1f)) {
                 Text("GitPush", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                val allKnown = Store.repos.value.isNotEmpty() &&
+                    Store.repos.value.all { (usageMap[it.fullName] ?: -1L) >= 0L }
                 Text(
-                    "${Store.repos.value.size} repository",
+                    if (allKnown) {
+                        val total = Store.repos.value.sumOf { usageMap[it.fullName] ?: 0L }
+                        "${Store.repos.value.size} repository • total ${formatBytes(total)}"
+                    } else "${Store.repos.value.size} repository",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp
                 )
@@ -139,7 +173,7 @@ fun HomeScreen() {
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filtered, key = { it.id }) { repo -> RepoCard(repo) }
+                    items(filtered, key = { it.id }) { repo -> RepoCard(repo, usageMap[repo.fullName]) }
                 }
             }
         }
@@ -151,7 +185,7 @@ fun HomeScreen() {
 }
 
 @Composable
-private fun RepoCard(repo: GhRepo) {
+private fun RepoCard(repo: GhRepo, usage: Long?) {
     val shape = RoundedCornerShape(14.dp)
     Card(
         onClick = {
@@ -217,10 +251,19 @@ private fun RepoCard(repo: GhRepo) {
                 Icon(Icons.Filled.Star, contentDescription = null, tint = GrayMuted, modifier = Modifier.size(13.dp))
                 Spacer(Modifier.size(3.dp))
                 Text("${repo.stars}", color = GrayMuted, fontSize = 11.sp)
-                if (repo.sizeKb > 0) {
-                    Spacer(Modifier.size(12.dp))
-                    Text(formatBytes(repo.sizeKb * 1024), color = GrayMuted, fontSize = 11.sp)
-                }
+                Spacer(Modifier.size(12.dp))
+                // Ukuran riil isi repository (termasuk Git LFS) — field "size" API GitHub
+                // tidak menghitung LFS sehingga bisa jauh lebih kecil dari kenyataan
+                Text(
+                    when {
+                        usage == null -> "…" // sedang menghitung
+                        usage >= 0L -> formatBytes(usage)
+                        repo.sizeKb > 0 -> formatBytes(repo.sizeKb * 1024) // gagal hitung → fallback API
+                        else -> "0 B"
+                    },
+                    color = GrayMuted,
+                    fontSize = 11.sp
+                )
                 Spacer(Modifier.weight(1f))
                 Text(timeAgo(repo.updatedAt), color = GrayMuted, fontSize = 11.sp)
             }

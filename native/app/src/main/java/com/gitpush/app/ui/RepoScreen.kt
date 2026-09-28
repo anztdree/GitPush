@@ -106,19 +106,31 @@ fun RepoScreen(s: Screen.Repo) {
         }
     }
 
+    // Cache isi folder (kunci "branch@path") — naik/turun folder tampil seketika tanpa nunggu jaringan
+    val folderCache = remember { HashMap<String, List<GhNode>>() }
+
     val openDir: (String) -> Unit = { p ->
+        val br = branch
+        // Posisi folder di-update DETANG (sebelum fetch jaringan) —
+        // tombol/gestur back selalu benar walau daftar folder masih dimuat
+        path = p
+        Store.lastRepoPath["${s.fullName}@$br"] = p
+        error = null
+        val cached = folderCache["$br@$p"]
+        nodes = cached // cache tampil seketika; null → spinner
         scope.launch {
-            nodes = null
-            error = null
             try {
-                nodes = withContext(Dispatchers.IO) {
-                    GitHubApi.fetchContents(Store.token.value, s.owner, s.name, p, branch)
+                val fresh = withContext(Dispatchers.IO) {
+                    GitHubApi.fetchContents(Store.token.value, s.owner, s.name, p, br)
                 }
-                path = p
-                Store.lastRepoPath["${s.fullName}@$branch"] = p
+                folderCache["$br@$p"] = fresh
+                if (path == p && branch == br) nodes = fresh // masih di folder ini → terapkan
             } catch (e: Exception) {
-                error = GitHubApi.humanError(e)
-                nodes = emptyList()
+                if (path == p && branch == br && cached == null) {
+                    error = GitHubApi.humanError(e)
+                    nodes = emptyList()
+                }
+                // Gagal saat cache tampil: biarkan tampilan cache, diulang lewat Segarkan
             }
         }
     }
@@ -188,6 +200,8 @@ fun RepoScreen(s: Screen.Repo) {
                 dirSizes = sums
                 dirCounts = counts
                 realUsage = total
+                // Bagikan hasil ke cache global → kartu Beranda & kuota Upload ikut akurat
+                GitHubApi.putUsageCache(s.owner, s.name, branch, total)
             }
         }
     }
@@ -528,6 +542,8 @@ fun RepoScreen(s: Screen.Repo) {
                             val (_, n) = withContext(Dispatchers.IO) {
                                 GitHubApi.renameFolder(Store.token.value, s.owner, s.name, branch, old, new)
                             }
+                            GitHubApi.invalidateUsage(s.owner, s.name)
+                            folderCache.clear()
                             Store.log("rename", "Rename folder ${old.substringAfterLast('/')} → ${new.substringAfterLast('/')}", s.fullName)
                             toast("Folder di-rename ✓ ($n file dipindah)")
                             openDir(navUpPath(path, old))
@@ -535,6 +551,8 @@ fun RepoScreen(s: Screen.Repo) {
                             withContext(Dispatchers.IO) {
                                 GitHubApi.renameFile(Store.token.value, s.owner, s.name, branch, old, new)
                             }
+                            GitHubApi.invalidateUsage(s.owner, s.name)
+                            folderCache.clear()
                             Store.log("rename", "Rename ${old.substringAfterLast('/')} → ${new.substringAfterLast('/')}", s.fullName)
                             toast("File di-rename ✓")
                             openDir(path)
@@ -560,6 +578,8 @@ fun RepoScreen(s: Screen.Repo) {
                             val (_, n) = withContext(Dispatchers.IO) {
                                 GitHubApi.deleteFolder(Store.token.value, s.owner, s.name, branch, node.path)
                             }
+                            GitHubApi.invalidateUsage(s.owner, s.name)
+                            folderCache.clear()
                             Store.log("delete", "Hapus folder ${node.name} ($n file)", s.fullName)
                             toast("Folder dihapus ✓ ($n file)")
                             openDir(navUpPath(path, node.path))
@@ -570,6 +590,8 @@ fun RepoScreen(s: Screen.Repo) {
                                     it, node.sha, branch
                                 )
                             }
+                            GitHubApi.invalidateUsage(s.owner, s.name)
+                            folderCache.clear()
                             Store.log("delete", "Hapus ${node.name}", s.fullName)
                             toast("File dihapus ✓")
                             openDir(path)

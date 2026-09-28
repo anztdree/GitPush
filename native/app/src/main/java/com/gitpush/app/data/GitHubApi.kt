@@ -208,6 +208,63 @@ object GitHubApi {
             parseRepo(o)
         }
 
+    // ============ PEMAKAIAN RIIL REPOSITORY (termasuk objek Git LFS) ============
+    // Field "size" pada API GitHub TIDAK termasuk isi Git LFS — repo berisi file besar
+    // via LFS bisa tercatat 10 MB padahal isinya ratusan MB. Fungsi di bawah menghitung
+    // jumlah byte semua blob di tree + ukuran asli objek LFS, dengan cache memori 5 menit.
+
+    private val usageCache = HashMap<String, Pair<Long, Long>>() // kunci → (byte, waktu dihitung)
+    private const val USAGE_TTL_MS = 5L * 60 * 1000
+
+    /** Buang cache pemakaian repository — panggil setelah upload/rename/hapus/commit. */
+    fun invalidateUsage(owner: String, repo: String) {
+        synchronized(usageCache) {
+            val prefix = "$owner/$repo@"
+            usageCache.keys.removeAll { it.startsWith(prefix) }
+        }
+    }
+
+    /** Simpan hasil hitung manual (mis. dari layar repo yang sudah mem-parsing tree). */
+    fun putUsageCache(owner: String, repo: String, branch: String, bytes: Long) {
+        synchronized(usageCache) {
+            usageCache["$owner/$repo@$branch"] = bytes to System.currentTimeMillis()
+        }
+    }
+
+    /** Nilai cache tanpa hitung ulang (null bila belum pernah dihitung/kedaluwarsa). */
+    fun cachedUsage(owner: String, repo: String, branch: String): Long? =
+        synchronized(usageCache) { usageCache["$owner/$repo@$branch"]?.first }
+
+    /**
+     * Pemakaian riil repository dalam byte — jumlah ukuran semua file (blob) di tree,
+     * termasuk ukuran ASLI objek Git LFS (pointer ±130 B dihitung dari baris "size"-nya).
+     * Repository kosong → 0 B. [force] = hitung ulang walau cache masih segar.
+     */
+    suspend fun fetchRepoUsage(
+        token: String, owner: String, repo: String, branch: String, force: Boolean = false
+    ): Long {
+        val key = "$owner/$repo@$branch"
+        if (!force) {
+            synchronized(usageCache) {
+                usageCache[key]?.let { (bytes, at) ->
+                    if (System.currentTimeMillis() - at < USAGE_TTL_MS) return bytes
+                }
+            }
+        }
+        val total = try {
+            val commitSha = refSha(token, owner, repo, branch)
+            val treeSha = commitTreeSha(token, owner, repo, commitSha)
+            val blobs = fetchTreeRecursive(token, owner, repo, treeSha).filter { it.type == "blob" }
+            val ptrs = resolveLfsPointers(token, owner, repo, blobs.map { it.sha to it.size })
+            blobs.sumOf { ptrs[it.sha]?.second ?: it.size }
+        } catch (e: GhException) {
+            // 409 = repository kosong (belum ada commit), 404 = branch belum ada → 0 B
+            if (e.code == 409 || e.code == 404) 0L else throw e
+        }
+        putUsageCache(owner, repo, branch, total)
+        return total
+    }
+
     // ============ CONTENTS ============
 
     suspend fun fetchContents(token: String, owner: String, repo: String, path: String, ref: String): List<GhNode> =

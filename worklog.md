@@ -294,3 +294,25 @@ Stage Summary:
 - Posisi folder bertahan saat membuka file/editor, ganti tab, dan kembali ke repo yang sama.
 - Breadcrumb clickable untuk lompat ke folder mana pun di jalur.
 - Artefak: GitPush-v1.1.apk versionCode 6 di Release v1.1 (aset diganti).
+
+---
+Task ID: 13
+Agent: Z.ai Code (main)
+Task: Fix (1) tombol back masih keluar ke halaman depan saat di dalam folder, (2) ukuran total bohong — kartu Beranda & kuota Upload memakai size API GitHub (10 MB) bukan pemakaian riil termasuk Git LFS (351 MB)
+
+Work Log:
+- Diagnosis back: openDir lama hanya men-set `path` SETELAH fetch jaringan sukses → selama loading (dan saat gagal) `path` masih nilai lama → BackHandler(enabled = path.isNotEmpty()) disabled → back jatuh ke handler MainScaffold → Store.pop() keluar ke Beranda. Tanpa cache, back juga selalu menunggu jaringan lagi.
+- RepoScreen.kt: openDir ditulis ulang — `path` & Store.lastRepoPath di-update DETANG (sebelum fetch); cache folder per kunci "branch@path" (folderCache) → naik/turun folder tampil seketika, segarkan senyap di latar; hasil fetch hanya diterapkan bila user masih di folder yang sama (cegah isi tertukar saat pindah cepat); gagal tanpa cache → error card, gagal dengan cache → tampilan cache dipertahankan.
+- folderCache di-clear setelah rename/hapus (file & folder) agar tidak tampil isi basi; GitHubApi.invalidateUsage dipanggil pada semua mutasi repo (upload selesai, rename file/folder, hapus file/folder, simpan editor).
+- Diagnosis ukuran: field "size" API GitHub TIDAK termasuk isi Git LFS — repo ubl-s23 tampil ±10 MB padahal ±351 MB (LFS). RepoCard Beranda & kuota UploadScreen sama-sama memakai sizeKb.
+- GitHubApi.kt: fetchRepoUsage() — ref → commit tree → tree recursive → resolveLfsPointers → jumlah byte riil; cache memori 5 menit (usageCache) + invalidateUsage/putUsageCache/cachedUsage; repo kosong (409/404) → 0 B.
+- HomeScreen.kt: computeUsages paralel (Semaphore 3) per repo → RepoCard tampil "…" lalu ukuran riil (fallback sizeKb hanya bila hitung gagal); header Beranda kini "N repository • total X" saat semua terhitung.
+- UploadScreen.kt: kartu kuota + guard 2 GB + baris "+ upload ini" kini dari fetchRepoUsage (cache dulu, lalu hitung segar saat repo dipilih), bukan sizeKb.
+- RepoScreen background pass (dirSizes/realUsage) kini juga menulis putUsageCache → kartu Beranda berikutnya instan & konsisten.
+- Versi: versionCode 6 → 7, versionName 1.1 → 1.2; Settings "GitPush v1.2 — Native Android", Profile "v1.2 NATIVE".
+- Build: assembleRelease BUILD SUCCESSFUL 3m52s (percobaan pertama daemon Gradle terbunuh — daemon di-stop lalu diulang); aapt: versionCode 7, versionName 1.2, izin INTERNET+MANAGE_EXTERNAL_STORAGE+WRITE(maxSdk 32); APK 3.243.589 B → /home/z/my-project/GitPush-v1.2.apk.
+
+Stage Summary:
+- Back di dalam repo kini SELALU naik satu folder — bahkan saat daftar folder masih dimuat; di root back keluar layar. Navigasi antar folder instan berkat cache folder.
+- Semua tampilan ukuran (kartu Beranda, total Beranda, kuota dalam repo, kuota tab Unggah) konsisten memakai pemakaian riil termasuk Git LFS — tidak ada lagi kontradiksi 10 MB vs 351 MB.
+- Artefak: GitPush-v1.2.apk (versionCode 7) → Release v1.2.

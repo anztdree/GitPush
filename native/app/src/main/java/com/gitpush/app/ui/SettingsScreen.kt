@@ -231,7 +231,7 @@ fun SettingsScreen() {
                 )
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text("GitPush v1.1 — Native Android", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text("GitPush v1.2 — Native Android", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                     Text(
                         "Kotlin + Jetpack Compose • Git Data API • OkHttp — murni native, tanpa webview.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

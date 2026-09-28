@@ -225,13 +225,12 @@ fun UploadScreen() {
         if (upPhase == "done") {
             picked = emptyList()
             Toast.makeText(ctx, "Upload selesai ✓", Toast.LENGTH_LONG).show()
-            // Segarkan pemakaian kuota repository
+            // Segarkan pemakaian kuota repository (riil — termasuk Git LFS)
             selected?.let { r ->
                 runCatching {
-                    val fresh = withContext(Dispatchers.IO) {
-                        GitHubApi.fetchRepo(Store.token.value, r.owner, r.name)
-                    }
-                    repoUsedBytes = fresh.sizeKb * 1024
+                    repoUsedBytes = GitHubApi.fetchRepoUsage(
+                        Store.token.value, r.owner, r.name, branch
+                    )
                 }
             }
         }
@@ -265,13 +264,13 @@ fun UploadScreen() {
     LaunchedEffect(selected?.id) {
         val r = selected ?: return@LaunchedEffect
         branch = r.defaultBranch
-        repoUsedBytes = r.sizeKb * 1024
+        // Pemakaian riil (termasuk LFS): pakai cache bila ada, lalu hitung ulang segar
+        repoUsedBytes = GitHubApi.cachedUsage(r.owner, r.name, r.defaultBranch) ?: 0L
         scope.launch {
             runCatching {
-                val fresh = withContext(Dispatchers.IO) {
-                    GitHubApi.fetchRepo(Store.token.value, r.owner, r.name)
-                }
-                repoUsedBytes = fresh.sizeKb * 1024
+                repoUsedBytes = GitHubApi.fetchRepoUsage(
+                    Store.token.value, r.owner, r.name, r.defaultBranch, force = true
+                )
             }
         }
         runCatching {

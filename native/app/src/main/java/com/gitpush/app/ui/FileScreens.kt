@@ -513,6 +513,7 @@ fun EditorScreen(s: Screen.Editor) {
                                         (if (isCreate) "Buat " else "Edit ") + path.substringAfterLast('/'),
                                         "${s.owner}/${s.name}"
                                     )
+                                    GitHubApi.invalidateUsage(s.owner, s.name) // kuota ikut berubah
                                     toast("Commit ${sha.take(7)} ✓")
                                     Store.pop()
                                 } catch (e: Exception) {
