@@ -2,6 +2,7 @@ package com.gitpush.app.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,6 +48,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -131,7 +134,7 @@ fun HomeScreen() {
             )
             else -> ResponsiveBox {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(340.dp),
+                    columns = GridCells.Adaptive(320.dp),
                     contentPadding = PaddingValues(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -149,17 +152,24 @@ fun HomeScreen() {
 
 @Composable
 private fun RepoCard(repo: GhRepo) {
-    Card(onClick = {
-        Store.push(
-            Screen.Repo(
-                owner = repo.owner,
-                name = repo.name,
-                fullName = repo.fullName,
-                defaultBranch = repo.defaultBranch,
-                isPrivate = repo.isPrivate
+    val shape = RoundedCornerShape(14.dp)
+    Card(
+        onClick = {
+            Store.push(
+                Screen.Repo(
+                    owner = repo.owner,
+                    name = repo.name,
+                    fullName = repo.fullName,
+                    defaultBranch = repo.defaultBranch,
+                    isPrivate = repo.isPrivate
+                )
             )
-        )
-    }) {
+        },
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier.fillMaxWidth().border(1.dp, MaterialTheme.colorScheme.outline, shape)
+    ) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -203,10 +213,14 @@ private fun RepoCard(repo: GhRepo) {
                 Box(Modifier.size(9.dp).background(langColor(repo.language), CircleShape))
                 Spacer(Modifier.size(5.dp))
                 Text(repo.language ?: "-", color = GrayMuted, fontSize = 11.sp)
-                Spacer(Modifier.size(14.dp))
+                Spacer(Modifier.size(12.dp))
                 Icon(Icons.Filled.Star, contentDescription = null, tint = GrayMuted, modifier = Modifier.size(13.dp))
                 Spacer(Modifier.size(3.dp))
                 Text("${repo.stars}", color = GrayMuted, fontSize = 11.sp)
+                if (repo.sizeKb > 0) {
+                    Spacer(Modifier.size(12.dp))
+                    Text(formatBytes(repo.sizeKb * 1024), color = GrayMuted, fontSize = 11.sp)
+                }
                 Spacer(Modifier.weight(1f))
                 Text(timeAgo(repo.updatedAt), color = GrayMuted, fontSize = 11.sp)
             }

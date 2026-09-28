@@ -238,3 +238,24 @@ Stage Summary:
 - Repo github.com/anztdree/GitPush kini bersih & fokus: murni source aplikasi Android native (Kotlin + Jetpack Compose) + README proper + jurnal dev — tanpa file web, tanpa scaffold, tanpa aset duplikat.
 - 58+ file sampah & ±4 MB bobot hilang dari HEAD; riwayat commit lama tidak menyimpan file sampah tersebut (history dibuat ulang pada Task 8, cleanup ini hanya menambah commit baru).
 - Unduhan APK tetap: https://github.com/anztdree/GitPush/releases/download/v1.0/GitPush-v1.0.apk
+
+---
+Task ID: 11
+Agent: Z.ai Code (main)
+Task: Fitur file manager/cloud storage — rename & hapus folder, kuota 2 GB per repository, logo baru transparan, upgrade visual (feedback user v1.1)
+
+Work Log:
+- Logo baru diunduh dari URL permanen github.com/user-attachments/assets/965bbddb… (link private-user-images pertama sudah expired 5 menit; user menempel logo ke README sehingga URL permanen tersedia). 1024×1024 JPEG.
+- scripts/process-new-logo.mjs (baru): flood-fill dari tepi membuang background putih → transparan + dehalo tepi (alpha parsial), trim/pad persegi, sampling warna tile #2A333D. Bug pertama diperbaiki (crop membaca file asli, bukan buffer hasil proses). Hasil: brand/icon-raw.png transparan (pojok alpha 0, tile utuh).
+- scripts/gen-android-icons.mjs & gen-icons.mjs ditulis ulang untuk pipeline logo transparan: ic_launcher/round/foreground semua density dari tile di atas bidang #2A333D (mask launcher memotong mulus), ic_launcher_background.xml → #2A333D, ikon web icon-512/192 tetap transparan, apple-touch-icon di-flatten.
+- RENAME FOLDER: GitHubApi.renameFolder/deleteFolder (private moveOrDeleteFolder) — Git Data API: tree rekursif → entri null-sha menghapus path lama + entri blob di path baru (mode asli dipertahankan, TreeNode diberi field mode) → commit → update ref; retry 3× saat non fast-forward; error 404 folder kosong tidak diulang. 1 commit untuk folder berapapun jumlah filenya.
+- UI folder: menu kebab folder kini punya Download (ZIP) + Rename folder + Hapus folder; dialog khusus folder (judul, teks peringatan isi folder, validasi nama tanpa '/'); setelah aksi pada folder yang sedang dibuka, navigasi otomatis naik ke induk (navUpPath).
+- UJI END-TO-END API via curl di branch tmp-api-test: buat folder 2 file (nested) → rename folder (folder lama 404, isi utuh sha blob sama, nested OK) → hapus folder (folder 404, file lain utuh) → branch test dihapus (204). Teknik yang sama persis dengan implementasi Kotlin.
+- KUOTA 2 GB: konstanta REPO_QUOTA_BYTES + QuotaBar composable (bar animasi, warna hijau/kuning/merah sesuai 70%/90%/100%); GhRepo.sizeKb + GitHubApi.fetchRepo; RepoScreen menampilkan kartu "Penyimpanan repository — batas 2 GB" (auto refresh saat segarkan & setelah aksi); UploadScreen: kartu kuota compact + baris "+ upload ini" real-time saat memilih file, guard tombol commit menolak bila terpakai+pilihan > 2 GB dengan pesan rinci, kuota di-refresh setelah upload selesai.
+- UPGRADE VISUAL: kartu repo Beranda diberi border halus + shape 14dp + meta ukuran repo (formatBytes) di samping bintang; grid adaptive 320dp; BottomBar dengan NavigationBarItemDefaults (ikon teks hijau saat aktif, abu saat tidak, label tebal saat aktif, indicator hijau transparan); Splash dengan kotak gradient hijau (GreenDeep→GreenPrimary) dan ikon putih.
+- Versi: versionCode 3→4, versionName 1.0→1.1; SettingsScreen "GitPush v1.1 — Native Android", ProfileScreen "v1.1 NATIVE"; teks web (AuthScreen/ProfileView) ikut v1.1 ±3,0 MB.
+- Build: assembleRelease EXIT 0 (2× — pertama tanpa ikon baru, kedua dengan ikon baru); aapt: versionCode 4, versionName 1.1, label GitPush, izin INTERNET+MANAGE_EXTERNAL_STORAGE+WRITE(maxSdk 32); APK 3.210.821 bytes → public/gitpush.apk; lint web 0 error.
+
+Stage Summary:
+- GitPush v1.1 (versionCode 4): rename folder & hapus folder 1 commit (teruji API end-to-end), kuota 2 GB per repository dengan bar ala penyimpanan awan + guard upload, logo baru transparan di semua ikon (launcher Android + web), tampilan lebih rapi (kartu bordered, bottom nav berwarna, splash gradient).
+- APK: public/gitpush.apk + aset Release v1.1 (GitPush-v1.1.apk).

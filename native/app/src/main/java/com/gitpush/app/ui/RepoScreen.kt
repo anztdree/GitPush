@@ -63,6 +63,7 @@ import androidx.compose.ui.window.Dialog
 import com.gitpush.app.data.GhBranch
 import com.gitpush.app.data.GhCommit
 import com.gitpush.app.data.GhNode
+import com.gitpush.app.data.GhRepo
 import com.gitpush.app.data.GitHubApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -85,6 +86,17 @@ fun RepoScreen(s: Screen.Repo) {
     var zipProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     var renameTarget by remember { mutableStateOf<GhNode?>(null) }
     var deleteTarget by remember { mutableStateOf<GhNode?>(null) }
+    var repoInfo by remember { mutableStateOf<GhRepo?>(null) }
+
+    val loadRepoInfo: () -> Unit = {
+        scope.launch {
+            repoInfo = runCatching {
+                withContext(Dispatchers.IO) {
+                    GitHubApi.fetchRepo(Store.token.value, s.owner, s.name)
+                }
+            }.getOrNull()
+        }
+    }
 
     val openDir: (String) -> Unit = { p ->
         scope.launch {
@@ -125,6 +137,7 @@ fun RepoScreen(s: Screen.Repo) {
                 GitHubApi.fetchBranches(Store.token.value, s.owner, s.name)
             }
         }
+        loadRepoInfo()
     }
     LaunchedEffect(branch) {
         openDir("")
@@ -236,6 +249,7 @@ fun RepoScreen(s: Screen.Repo) {
             IconButton(onClick = {
                 openDir(path)
                 reloadMeta()
+                loadRepoInfo()
             }) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Segarkan")
             }
@@ -303,6 +317,15 @@ fun RepoScreen(s: Screen.Repo) {
                             if (zipProgress != null) "Mengunduh repository…" else "Download repository (ZIP)",
                             fontWeight = FontWeight.SemiBold
                         )
+                    }
+                }
+                if ((repoInfo?.sizeKb ?: 0L) > 0L) {
+                    item {
+                        Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                                QuotaBar(usedBytes = repoInfo!!.sizeKb * 1024)
+                            }
+                        }
                     }
                 }
                 when {
@@ -439,17 +462,28 @@ fun RepoScreen(s: Screen.Repo) {
         RenameDialog(
             node = node,
             currentDir = path,
+            isFolder = node.type == "dir",
             onDismiss = { renameTarget = null },
             onDone = { old, new ->
                 renameTarget = null
                 scope.launch {
                     try {
-                        withContext(Dispatchers.IO) {
-                            GitHubApi.renameFile(Store.token.value, s.owner, s.name, branch, old, new)
+                        if (node.type == "dir") {
+                            val (_, n) = withContext(Dispatchers.IO) {
+                                GitHubApi.renameFolder(Store.token.value, s.owner, s.name, branch, old, new)
+                            }
+                            Store.log("rename", "Rename folder ${old.substringAfterLast('/')} → ${new.substringAfterLast('/')}", s.fullName)
+                            toast("Folder di-rename ✓ ($n file dipindah)")
+                            openDir(navUpPath(path, old))
+                        } else {
+                            withContext(Dispatchers.IO) {
+                                GitHubApi.renameFile(Store.token.value, s.owner, s.name, branch, old, new)
+                            }
+                            Store.log("rename", "Rename ${old.substringAfterLast('/')} → ${new.substringAfterLast('/')}", s.fullName)
+                            toast("File di-rename ✓")
+                            openDir(path)
                         }
-                        Store.log("rename", "Rename ${old.substringAfterLast('/')} → ${new.substringAfterLast('/')}", s.fullName)
-                        toast("File di-rename ✓")
-                        openDir(path)
+                        loadRepoInfo()
                     } catch (e: Exception) {
                         toast("Gagal: ${GitHubApi.humanError(e)}")
                     }
@@ -466,15 +500,25 @@ fun RepoScreen(s: Screen.Repo) {
                 deleteTarget = null
                 scope.launch {
                     try {
-                        withContext(Dispatchers.IO) {
-                            GitHubApi.deleteFile(
-                                Store.token.value, s.owner, s.name, node.path,
-                                it, node.sha, branch
-                            )
+                        if (node.type == "dir") {
+                            val (_, n) = withContext(Dispatchers.IO) {
+                                GitHubApi.deleteFolder(Store.token.value, s.owner, s.name, branch, node.path)
+                            }
+                            Store.log("delete", "Hapus folder ${node.name} ($n file)", s.fullName)
+                            toast("Folder dihapus ✓ ($n file)")
+                            openDir(navUpPath(path, node.path))
+                        } else {
+                            withContext(Dispatchers.IO) {
+                                GitHubApi.deleteFile(
+                                    Store.token.value, s.owner, s.name, node.path,
+                                    it, node.sha, branch
+                                )
+                            }
+                            Store.log("delete", "Hapus ${node.name}", s.fullName)
+                            toast("File dihapus ✓")
+                            openDir(path)
                         }
-                        Store.log("delete", "Hapus ${node.name}", s.fullName)
-                        toast("File dihapus ✓")
-                        openDir(path)
+                        loadRepoInfo()
                     } catch (e: Exception) {
                         toast("Gagal: ${GitHubApi.humanError(e)}")
                     }
@@ -483,6 +527,15 @@ fun RepoScreen(s: Screen.Repo) {
         )
     }
 }
+
+/**
+ * Setelah rename/hapus folder: bila kita sedang berada DI DALAM folder tsb,
+ * naik ke folder induknya; selain itu tetap di path sekarang.
+ */
+private fun navUpPath(current: String, target: String): String =
+    if (current == target || current.startsWith("$target/")) {
+        target.substringBeforeLast('/', "")
+    } else current
 
 @Composable
 private fun BreadcrumbRow(path: String, onOpen: (String) -> Unit) {
@@ -570,6 +623,16 @@ private fun FileRow(
                     leadingIcon = { Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(17.dp)) },
                     onClick = { menu = false; onDownloadFolder() }
                 )
+                DropdownMenuItem(
+                    text = { Text("Rename folder") },
+                    leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(17.dp)) },
+                    onClick = { menu = false; onRename() }
+                )
+                DropdownMenuItem(
+                    text = { Text("Hapus folder", color = MaterialTheme.colorScheme.error) },
+                    leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(17.dp)) },
+                    onClick = { menu = false; onDelete() }
+                )
             } else {
                 DropdownMenuItem(
                     text = { Text("Detail file") },
@@ -604,13 +667,20 @@ private fun FileRow(
 private fun RenameDialog(
     node: GhNode,
     currentDir: String,
+    isFolder: Boolean,
     onDismiss: () -> Unit,
     onDone: (String, String) -> Unit
 ) {
     var newName by remember { mutableStateOf(node.name) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename file", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        title = {
+            Text(
+                if (isFolder) "Rename folder" else "Rename file",
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp
+            )
+        },
         text = {
             Column {
                 Text(
@@ -623,13 +693,16 @@ private fun RenameDialog(
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
-                    label = { Text("Nama / path baru") },
+                    label = { Text(if (isFolder) "Nama folder baru" else "Nama / path baru") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Boleh pindah folder, contoh: docs/${node.name}. 1 commit via Git Data API.",
+                    if (isFolder)
+                        "Seluruh isi folder dipindah dalam 1 commit. Untuk memindahkan folder, ketik path baru, contoh: arsip/${node.name}."
+                    else
+                        "Boleh pindah folder, contoh: docs/${node.name}. 1 commit via Git Data API.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp,
                     lineHeight = 15.sp
@@ -639,7 +712,7 @@ private fun RenameDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    val typed = newName.trim()
+                    val typed = newName.trim().trim('/')
                     val full = if (typed.contains("/")) typed else
                         if (currentDir.isEmpty()) typed else "$currentDir/$typed"
                     if (typed.isNotEmpty() && full != node.path) onDone(node.path, full) else onDismiss()
@@ -657,13 +730,23 @@ private fun DeleteDialog(
     onDone: (String) -> Unit
 ) {
     var msg by remember { mutableStateOf("Hapus ${node.name} via GitPush") }
+    val isFolder = node.type == "dir"
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Hapus ${node.name}?", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        title = {
+            Text(
+                if (isFolder) "Hapus folder ${node.name}?" else "Hapus ${node.name}?",
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp
+            )
+        },
         text = {
             Column {
                 Text(
-                    "Tindakan ini membuat satu commit dan tidak bisa dibatalkan dari GitPush.",
+                    if (isFolder)
+                        "Seluruh isi folder \"${node.path}\" akan dihapus dalam satu commit dan tidak bisa dibatalkan dari GitPush."
+                    else
+                        "Tindakan ini membuat satu commit dan tidak bisa dibatalkan dari GitPush.",
                     fontSize = 13.sp,
                     lineHeight = 18.sp
                 )

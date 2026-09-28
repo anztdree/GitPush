@@ -26,7 +26,8 @@ data class GhRepo(
     val forks: Int,
     val issues: Int,
     val defaultBranch: String,
-    val updatedAt: String
+    val updatedAt: String,
+    val sizeKb: Long = 0 // ukuran repository (KB) dari API — untuk kuota 2 GB
 )
 
 data class GhNode(
@@ -70,7 +71,8 @@ data class TreeNode(
     val path: String,
     val sha: String,
     val type: String, // "blob" | "tree"
-    val size: Long
+    val size: Long,
+    val mode: String = "100644"
 )
 
 data class HistoryEntry(

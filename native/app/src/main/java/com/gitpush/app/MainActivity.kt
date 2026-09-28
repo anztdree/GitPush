@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -48,7 +50,9 @@ import com.gitpush.app.ui.AuthScreen
 import com.gitpush.app.ui.BlueAccent
 import com.gitpush.app.ui.EditorScreen
 import com.gitpush.app.ui.GitPushTheme
+import com.gitpush.app.ui.GreenDeep
 import com.gitpush.app.ui.GreenPrimary
+import com.gitpush.app.ui.GrayMuted
 import com.gitpush.app.ui.HomeScreen
 import com.gitpush.app.ui.NotificationsScreen
 import com.gitpush.app.ui.ProfileScreen
@@ -113,13 +117,16 @@ private fun Splash() {
             Box(
                 Modifier
                     .size(88.dp)
-                    .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(22.dp)),
+                    .background(
+                        Brush.linearGradient(listOf(GreenDeep, GreenPrimary)),
+                        RoundedCornerShape(24.dp)
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     Icons.Filled.Upload,
                     contentDescription = "Logo GitPush",
-                    tint = GreenPrimary,
+                    tint = Color.White,
                     modifier = Modifier.size(44.dp)
                 )
             }
@@ -174,16 +181,25 @@ fun MainScaffold() {
 @Composable
 private fun BottomBar() {
     val tab = Store.tab.value
+    val colors = NavigationBarItemDefaults.colors(
+        selectedIconColor = GreenPrimary,
+        indicatorColor = GreenPrimary.copy(alpha = 0.14f),
+        selectedTextColor = MaterialTheme.colorScheme.onSurface,
+        unselectedIconColor = GrayMuted,
+        unselectedTextColor = GrayMuted
+    )
     NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
         NavigationBarItem(
             selected = tab == "home" && Store.stack.isEmpty(),
             onClick = { Store.gotoTab("home") },
+            colors = colors,
             icon = { Icon(Icons.Filled.Home, contentDescription = "Beranda") },
-            label = { Text("Beranda", fontSize = 11.sp) }
+            label = { Text("Beranda", fontSize = 11.sp, fontWeight = if (tab == "home" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
         )
         NavigationBarItem(
             selected = tab == "notifs" && Store.stack.isEmpty(),
             onClick = { Store.gotoTab("notifs") },
+            colors = colors,
             icon = {
                 BadgedBox(badge = {
                     val n = Store.unread.value
@@ -194,25 +210,28 @@ private fun BottomBar() {
                     }
                 }) { Icon(Icons.Filled.Notifications, contentDescription = "Notifikasi") }
             },
-            label = { Text("Notifikasi", fontSize = 11.sp) }
+            label = { Text("Notifikasi", fontSize = 11.sp, fontWeight = if (tab == "notifs" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
         )
         NavigationBarItem(
             selected = tab == "upload" && Store.stack.isEmpty(),
             onClick = { Store.gotoTab("upload") },
-            icon = { Icon(Icons.Filled.Upload, contentDescription = "Unggah", tint = GreenPrimary) },
-            label = { Text("Unggah", fontSize = 11.sp) }
+            colors = colors,
+            icon = { Icon(Icons.Filled.Upload, contentDescription = "Unggah") },
+            label = { Text("Unggah", fontSize = 11.sp, fontWeight = if (tab == "upload" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
         )
         NavigationBarItem(
             selected = tab == "settings" && Store.stack.isEmpty(),
             onClick = { Store.gotoTab("settings") },
+            colors = colors,
             icon = { Icon(Icons.Filled.Settings, contentDescription = "Pengaturan") },
-            label = { Text("Pengaturan", fontSize = 11.sp) }
+            label = { Text("Pengaturan", fontSize = 11.sp, fontWeight = if (tab == "settings" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
         )
         NavigationBarItem(
             selected = tab == "profile" && Store.stack.isEmpty(),
             onClick = { Store.gotoTab("profile") },
+            colors = colors,
             icon = { Icon(Icons.Filled.Person, contentDescription = "Profil") },
-            label = { Text("Profil", fontSize = 11.sp) }
+            label = { Text("Profil", fontSize = 11.sp, fontWeight = if (tab == "profile" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
         )
     }
 }

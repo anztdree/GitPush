@@ -187,7 +187,8 @@ object GitHubApi {
         forks = o.optInt("forks_count"),
         issues = o.optInt("open_issues_count"),
         defaultBranch = o.optString("default_branch", "main").ifEmpty { "main" },
-        updatedAt = o.optString("updated_at")
+        updatedAt = o.optString("updated_at"),
+        sizeKb = o.optLong("size")
     )
 
     suspend fun createRepo(
@@ -198,6 +199,14 @@ object GitHubApi {
         val o = call(token, "POST", "/user/repos", body) ?: throw GhException("Respons kosong")
         parseRepo(o)
     }
+
+    /** Detail satu repository (untuk kuota penyimpanan 2 GB, dsb). */
+    suspend fun fetchRepo(token: String, owner: String, name: String): GhRepo =
+        withContext(Dispatchers.IO) {
+            val o = call(token, "GET", "/repos/$owner/$name")
+                ?: throw GhException("Repository tidak ditemukan", 404)
+            parseRepo(o)
+        }
 
     // ============ CONTENTS ============
 
@@ -322,7 +331,8 @@ object GitHubApi {
                     path = e.optString("path"),
                     sha = e.optString("sha"),
                     type = e.optString("type"),
-                    size = e.optLong("size")
+                    size = e.optLong("size"),
+                    mode = e.optString("mode").ifEmpty { "100644" }
                 )
             }
         }
@@ -788,6 +798,79 @@ object GitHubApi {
             JSONObject().put("sha", newCommit.optString("sha"))
         )
         newCommit.optString("sha")
+    }
+
+    // ============ FOLDER: RENAME & HAPUS (1 COMMIT VIA GIT DATA API) ============
+
+    /** Rename folder (pindah seluruh isinya) dalam 1 commit. Return: commitSha to jumlah file. */
+    suspend fun renameFolder(
+        token: String, owner: String, repo: String, branch: String, oldPath: String, newPath: String
+    ): Pair<String, Int> = moveOrDeleteFolder(token, owner, repo, branch, oldPath, newPath)
+
+    /** Hapus folder beserta seluruh isinya dalam 1 commit. Return: commitSha to jumlah file terhapus. */
+    suspend fun deleteFolder(
+        token: String, owner: String, repo: String, branch: String, path: String
+    ): Pair<String, Int> = moveOrDeleteFolder(token, owner, repo, branch, path, null)
+
+    private suspend fun moveOrDeleteFolder(
+        token: String, owner: String, repo: String, branch: String,
+        folderPath: String, newFolderPath: String?
+    ): Pair<String, Int> = withContext(Dispatchers.IO) {
+        val prefix = "$folderPath/"
+        var lastErr: Exception? = null
+        // Diulang maks 3x bila branch bergerak saat update ref (non fast-forward)
+        repeat(3) { attempt ->
+            try {
+                val commitSha = refSha(token, owner, repo, branch)
+                val oldTreeSha = commitTreeSha(token, owner, repo, commitSha)
+                val tree = fetchTreeRecursive(token, owner, repo, oldTreeSha)
+                val inside = tree.filter { it.type == "blob" && it.path.startsWith(prefix) }
+                if (inside.isEmpty()) {
+                    throw GhException("Folder \"$folderPath\" kosong atau tidak ditemukan", 404)
+                }
+                val arr = JSONArray()
+                for (e in inside) {
+                    arr.put(
+                        JSONObject().put("path", e.path).put("mode", "100644").put("sha", JSONObject.NULL)
+                    )
+                    if (newFolderPath != null) {
+                        val np = newFolderPath + e.path.substring(folderPath.length)
+                        arr.put(
+                            JSONObject()
+                                .put("path", np)
+                                .put("mode", e.mode.ifEmpty { "100644" })
+                                .put("type", "blob")
+                                .put("sha", e.sha)
+                        )
+                    }
+                }
+                val newTree = call(
+                    token, "POST", "/repos/$owner/$repo/git/trees",
+                    JSONObject().put("base_tree", oldTreeSha).put("tree", arr)
+                ) ?: throw GhException("Gagal membuat tree")
+                val verb = if (newFolderPath == null) "Hapus folder $folderPath" else "Rename folder $folderPath menjadi $newFolderPath"
+                val newCommit = call(
+                    token, "POST", "/repos/$owner/$repo/git/commits",
+                    JSONObject()
+                        .put("message", "$verb via GitPush")
+                        .put("tree", newTree.optString("sha"))
+                        .put("parents", JSONArray().put(commitSha))
+                ) ?: throw GhException("Gagal membuat commit")
+                call(
+                    token, "PATCH", "/repos/$owner/$repo/git/refs/heads/${Uri.encode(branch)}",
+                    JSONObject().put("sha", newCommit.optString("sha"))
+                )
+                return@withContext newCommit.optString("sha") to inside.size
+            } catch (e: GhException) {
+                if (e.code == 404) throw e // folder kosong/tidak ada — jangan diulang
+                lastErr = e
+                if (attempt == 2) throw e
+            } catch (e: Exception) {
+                lastErr = e
+                if (attempt == 2) throw e
+            }
+        }
+        throw lastErr ?: GhException("Gagal memproses folder")
     }
 
     // ============ NOTIFIKASI ============

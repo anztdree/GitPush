@@ -201,6 +201,7 @@ fun UploadScreen() {
 
     var picked by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
     var msg by remember { mutableStateOf("") }
+    var repoUsedBytes by remember { mutableStateOf(0L) }
 
     var showBrowser by remember { mutableStateOf(false) }
     var safScanning by remember { mutableStateOf(false) }
@@ -224,6 +225,15 @@ fun UploadScreen() {
         if (upPhase == "done") {
             picked = emptyList()
             Toast.makeText(ctx, "Upload selesai ✓", Toast.LENGTH_LONG).show()
+            // Segarkan pemakaian kuota repository
+            selected?.let { r ->
+                runCatching {
+                    val fresh = withContext(Dispatchers.IO) {
+                        GitHubApi.fetchRepo(Store.token.value, r.owner, r.name)
+                    }
+                    repoUsedBytes = fresh.sizeKb * 1024
+                }
+            }
         }
     }
 
@@ -255,6 +265,15 @@ fun UploadScreen() {
     LaunchedEffect(selected?.id) {
         val r = selected ?: return@LaunchedEffect
         branch = r.defaultBranch
+        repoUsedBytes = r.sizeKb * 1024
+        scope.launch {
+            runCatching {
+                val fresh = withContext(Dispatchers.IO) {
+                    GitHubApi.fetchRepo(Store.token.value, r.owner, r.name)
+                }
+                repoUsedBytes = fresh.sizeKb * 1024
+            }
+        }
         runCatching {
             branches = withContext(Dispatchers.IO) {
                 GitHubApi.fetchBranches(Store.token.value, r.owner, r.name)
@@ -318,10 +337,15 @@ fun UploadScreen() {
 
     val startUpload: () -> Unit = {
         val r = selected
+        val pickedBytes = picked.sumOf { it.size }
         when {
             upActive -> { }
             r == null -> toast("Pilih repository dulu")
             picked.isEmpty() -> toast("Pilih file atau folder dulu")
+            repoUsedBytes + pickedBytes > REPO_QUOTA_BYTES -> toast(
+                "Melebihi kuota 2 GB per repository — terpakai ${formatBytes(repoUsedBytes)}, " +
+                    "pilihan ${formatBytes(pickedBytes)}, sisa kuota ${formatBytes((REPO_QUOTA_BYTES - repoUsedBytes).coerceAtLeast(0))}"
+            )
             else -> {
                 val message = msg.ifBlank { "Tambah ${picked.size} file via GitPush" }
                 UploadManager.start(
@@ -340,6 +364,8 @@ fun UploadScreen() {
     }
 
     val lfsCount = picked.count { it.size > GitHubApi.LFS_THRESHOLD_BYTES }
+    val pickedBytes = picked.sumOf { it.size }
+    val overQuota = repoUsedBytes + pickedBytes > REPO_QUOTA_BYTES
     val showForm = !upActive
 
     Column(Modifier.fillMaxSize()) {
@@ -423,6 +449,26 @@ fun UploadScreen() {
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
+                        Spacer(Modifier.height(10.dp))
+                        // ===== Kuota penyimpanan ala penyimpanan awan (2 GB / repo) =====
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                QuotaBar(usedBytes = repoUsedBytes, extraBytes = pickedBytes, compact = true)
+                                if (overQuota) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "Melebihi kuota 2 GB — kurangi file yang dipilih.",
+                                        color = RedDanger,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     // ===== Banner izin penyimpanan =====

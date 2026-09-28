@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -34,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -239,6 +241,66 @@ fun ResponsiveBox(content: @Composable () -> Unit) {
                 Box(Modifier.fillMaxSize()) { content() }
             }
         }
+    }
+}
+
+// ---------- Kuota penyimpanan ----------
+
+/** Batas penyimpanan per repository yang ditetapkan GitPush: 2 GB. */
+const val REPO_QUOTA_BYTES: Long = 2L * 1024 * 1024 * 1024
+
+fun quotaRatio(usedBytes: Long): Float =
+    (usedBytes.toFloat() / REPO_QUOTA_BYTES).coerceIn(0f, 1f)
+
+fun quotaColor(usedBytes: Long): Color = when {
+    usedBytes >= REPO_QUOTA_BYTES -> RedDanger
+    usedBytes >= (REPO_QUOTA_BYTES * 0.9).toLong() -> RedDanger
+    usedBytes >= (REPO_QUOTA_BYTES * 0.7).toLong() -> YellowWarn
+    else -> GreenPrimary
+}
+
+/**
+ * Bar kuota penyimpanan ala penyimpanan awan: dipakai / 2 GB.
+ * [extraBytes] = tambahan yang akan masuk (mis. total file terpilih saat upload).
+ */
+@Composable
+fun QuotaBar(
+    usedBytes: Long,
+    modifier: Modifier = Modifier,
+    extraBytes: Long = 0L,
+    compact: Boolean = false
+) {
+    val ratio = quotaRatio(if (extraBytes > 0) usedBytes + extraBytes else usedBytes)
+    val anim by animateFloatAsState(targetValue = ratio, label = "quota")
+    val color = quotaColor(if (extraBytes > 0) usedBytes + extraBytes else usedBytes)
+    val pct = (ratio * 100).let { p ->
+        if (p >= 10f || p == 0f) "${p.toInt()}%" else String.format(Locale.US, "%.1f%%", p)
+    }
+    Column(modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (compact) "Kuota 2 GB" else "Penyimpanan repository — batas 2 GB",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = if (compact) 12.sp else 13.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Text(pct, fontSize = if (compact) 12.sp else 13.sp, color = color, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(6.dp))
+        LinearProgressIndicator(
+            progress = { anim },
+            color = color,
+            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.fillMaxWidth().height(if (compact) 5.dp else 7.dp)
+        )
+        Spacer(Modifier.height(5.dp))
+        val usedTxt = formatBytes(usedBytes.coerceAtLeast(0))
+        val base = "$usedTxt terpakai • sisa ${formatBytes((REPO_QUOTA_BYTES - usedBytes).coerceAtLeast(0))}"
+        Text(
+            if (extraBytes > 0) "$base • upload ini +${formatBytes(extraBytes)}" else base,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp
+        )
     }
 }
 
