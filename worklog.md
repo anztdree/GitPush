@@ -259,3 +259,21 @@ Work Log:
 Stage Summary:
 - GitPush v1.1 (versionCode 4): rename folder & hapus folder 1 commit (teruji API end-to-end), kuota 2 GB per repository dengan bar ala penyimpanan awan + guard upload, logo baru transparan di semua ikon (launcher Android + web), tampilan lebih rapi (kartu bordered, bottom nav berwarna, splash gradient).
 - APK: public/gitpush.apk + aset Release v1.1 (GitPush-v1.1.apk).
+
+---
+Task ID: 11
+Agent: Z.ai Code (main)
+Task: Fix pembacaan ukuran file (100 MB terbaca 132 B — LFS pointer) + urutan listing folder-first alfabetis
+
+Work Log:
+- Diagnosis: file >95 MB di-commit sebagai pointer Git LFS (±130 B di git tree), sehingga Contents API melaporkan ukuran pointer (user melihat 132 B untuk file 100 MB). Listing juga ditampilkan apa adanya dari API (acak).
+- GitHubApi.kt: (1) tambah lfsPointerInfo() — parse pointer "version …/spec/v1" → (oid, ukuran asli); (2) resolveLfsPointers() — selidiki blob kandidat 100–600 B (maks 60, 6 paralel); (3) fetchContents kini SORT: folder dulu A→Z lalu file A→Z (case-insensitive) + patch ukuran LFS riil + flag isLfs; (4) fetchFileMeta deteksi pointer → ukuran asli; (5) lfsDownloadAction() via LFS batch API (operation=download) → href presigned; (6) streamLfsContent() — streaming konten asli ke OutputStream; (7) downloadFile pointer-aware (unduh isi asli, bukan pointer); (8) zipBlobs ditulis ulang streaming per-entry, limit naik (1500 file / 500 MB), LFS di-stream ke ZIP; (9) downloadRepoZip selalu rakit ZIP sendiri (zipball GitHub memuat pointer LFS); (10) saveToDownloads → suspend writer; commitTreeSha dipublikasikan.
+- Models.kt: isLfs pada GhNode/GhFileContent/TreeNode.
+- RepoScreen.kt: background pass per-branch (tree recursive) → dirSizes + dirCounts + realUsage; FileRow menampilkan "N item • ukuran" untuk folder dan "LFS • ukuran" untuk file LFS; QuotaBar pakai pemakaian riil (termasuk LFS), bukan sizeKb git; openEditor memblokir edit file LFS (toast).
+- FileScreens.kt: Viewer deteksi pointer → kartu "File Git LFS" (nama, ukuran asli, tombol Unduh file asli), header pakai ukuran riil, baris aksi Salin/Edit disembunyikan untuk LFS.
+- Build: versionCode 5 (versionName 1.1), assembleRelease sukses, APK 3.1 MB → GitPush-v1.1.apk.
+
+Stage Summary:
+- Ukuran file/folder/kuota kini akurat termasuk objek Git LFS; unduhan file & ZIP berisi konten asli (bukan pointer).
+- Urutan listing: folder dulu (A→Z), lalu file (A→Z), tidak peka kapital.
+- Artefak: native/app/build/outputs/apk/release/app-release.apk (versionCode 5), salinan /home/z/my-project/GitPush-v1.1.apk.

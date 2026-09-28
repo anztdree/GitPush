@@ -78,6 +78,8 @@ fun ViewerScreen(s: Screen.Viewer) {
     var meta by remember { mutableStateOf<GhFileContent?>(null) }
     var raw by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    // (oid, ukuran asli) bila file ternyata pointer Git LFS
+    var lfsInfo by remember { mutableStateOf<Pair<String, Long>?>(null) }
 
     LaunchedEffect(s.sha) {
         try {
@@ -85,12 +87,20 @@ fun ViewerScreen(s: Screen.Viewer) {
                 GitHubApi.fetchFileMeta(Store.token.value, s.owner, s.name, s.path, s.branch)
             }
             meta = m
-            bytes = if (m.contentB64 != null) {
+            val rawBytes = if (m.contentB64 != null) {
                 Base64.decode(m.contentB64, Base64.DEFAULT)
             } else {
                 withContext(Dispatchers.IO) {
                     GitHubApi.fetchBlobBytes(Store.token.value, s.owner, s.name, s.sha)
                 }
+            }
+            val ptr = if (rawBytes.size <= 2048) GitHubApi.lfsPointerInfo(String(rawBytes)) else null
+            if (ptr != null) {
+                lfsInfo = ptr
+                bytes = null
+            } else {
+                lfsInfo = null
+                bytes = rawBytes
             }
         } catch (e: Exception) {
             error = GitHubApi.humanError(e)
@@ -118,7 +128,7 @@ fun ViewerScreen(s: Screen.Viewer) {
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
                 Text(
-                    "${s.branch} • ${formatBytes(bytes?.size?.toLong() ?: s.size)}",
+                    "${s.branch} • ${formatBytes(lfsInfo?.second ?: bytes?.size?.toLong() ?: s.size)}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 11.sp
                 )
@@ -161,6 +171,24 @@ fun ViewerScreen(s: Screen.Viewer) {
             else -> {
                 val b = bytes ?: ByteArray(0)
                 when {
+                    lfsInfo != null -> LfsInfoCard(
+                        fileName = fileName,
+                        size = lfsInfo!!.second,
+                        onDownload = {
+                            scope.launch {
+                                try {
+                                    val node = com.gitpush.app.data.GhNode(fileName, s.path, "file", lfsInfo?.second ?: s.size, s.sha)
+                                    val loc = withContext(Dispatchers.IO) {
+                                        GitHubApi.downloadFile(ctx, Store.token.value, s.owner, s.name, node, s.branch)
+                                    }
+                                    Store.log("download", "Download $fileName", "${s.owner}/${s.name}")
+                                    toast("Tersimpan: $loc")
+                                } catch (e: Exception) {
+                                    toast("Gagal: ${GitHubApi.humanError(e)}")
+                                }
+                            }
+                        }
+                    )
                     isImageFile(fileName) -> {
                         val bmp = remember(b) {
                             runCatching { BitmapFactory.decodeByteArray(b, 0, b.size) }.getOrNull()
@@ -219,7 +247,7 @@ fun ViewerScreen(s: Screen.Viewer) {
             }
         }
 
-        if (!loading && error == null && isTextFile(fileName)) {
+        if (!loading && error == null && lfsInfo == null && isTextFile(fileName)) {
             Surface(color = MaterialTheme.colorScheme.surface) {
                 Row(
                     Modifier.fillMaxWidth().padding(10.dp),
@@ -537,4 +565,55 @@ fun EditorScreen(s: Screen.Editor) {
 @Composable
 private fun BackHandlerDiscard(enabled: Boolean, onBack: () -> Unit) {
     androidx.activity.compose.BackHandler(enabled = enabled, onBack = onBack)
+}
+
+/** Kartu info file Git LFS — isi asli tidak dirender, sediakan unduh konten asli. */
+@Composable
+private fun LfsInfoCard(fileName: String, size: Long, onDownload: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant
+        ) {
+            Icon(
+                Icons.Filled.Description,
+                contentDescription = null,
+                tint = GreenPrimary,
+                modifier = Modifier.padding(18.dp).size(34.dp)
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("File Git LFS", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "$fileName • ${formatBytes(size)}",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "File ini tersimpan sebagai objek Git LFS sehingga isinya tidak bisa " +
+                "dipratinjau langsung. Ukuran di atas adalah ukuran asli file. " +
+                "Unduh untuk mendapatkan isi lengkapnya ke folder Download/GitPush.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(18.dp))
+        Button(
+            onClick = onDownload,
+            colors = ButtonDefaults.buttonColors(containerColor = GreenDeep),
+            modifier = Modifier.fillMaxWidth().height(46.dp)
+        ) {
+            Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.size(8.dp))
+            Text("Unduh file asli (${formatBytes(size)})", fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(28.dp))
+    }
 }

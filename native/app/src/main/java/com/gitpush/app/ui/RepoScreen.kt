@@ -87,6 +87,9 @@ fun RepoScreen(s: Screen.Repo) {
     var renameTarget by remember { mutableStateOf<GhNode?>(null) }
     var deleteTarget by remember { mutableStateOf<GhNode?>(null) }
     var repoInfo by remember { mutableStateOf<GhRepo?>(null) }
+    var dirSizes by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var dirCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    var realUsage by remember { mutableStateOf<Long?>(null) }
 
     val loadRepoInfo: () -> Unit = {
         scope.launch {
@@ -142,6 +145,38 @@ fun RepoScreen(s: Screen.Repo) {
     LaunchedEffect(branch) {
         openDir("")
         reloadMeta()
+        // Latar belakang: ukuran per folder + total pemakaian riil (termasuk objek Git LFS)
+        scope.launch {
+            runCatching {
+                val tree = withContext(Dispatchers.IO) {
+                    val c = GitHubApi.refSha(Store.token.value, s.owner, s.name, branch)
+                    val t = GitHubApi.commitTreeSha(Store.token.value, s.owner, s.name, c)
+                    GitHubApi.fetchTreeRecursive(Store.token.value, s.owner, s.name, t)
+                }
+                val blobs = tree.filter { it.type == "blob" }
+                val ptrs = withContext(Dispatchers.IO) {
+                    GitHubApi.resolveLfsPointers(
+                        Store.token.value, s.owner, s.name, blobs.map { it.sha to it.size }
+                    )
+                }
+                val sums = HashMap<String, Long>()
+                val counts = HashMap<String, Int>()
+                var total = 0L
+                for (b in blobs) {
+                    val rs = ptrs[b.sha]?.second ?: b.size
+                    total += rs
+                    var parent = b.path.substringBeforeLast('/', "")
+                    if (parent.isNotEmpty()) counts[parent] = (counts[parent] ?: 0) + 1
+                    while (parent.isNotEmpty()) {
+                        sums[parent] = (sums[parent] ?: 0L) + rs
+                        parent = parent.substringBeforeLast('/', "")
+                    }
+                }
+                dirSizes = sums
+                dirCounts = counts
+                realUsage = total
+            }
+        }
     }
 
     // ---- aksi ----
@@ -208,6 +243,10 @@ fun RepoScreen(s: Screen.Repo) {
                     } else {
                         String(GitHubApi.fetchBlobBytes(Store.token.value, s.owner, s.name, meta.sha))
                     }
+                }
+                if (node != null && GitHubApi.lfsPointerInfo(initial) != null) {
+                    toast("File Git LFS tidak bisa diedit di sini — gunakan Unduh untuk file aslinya")
+                    return@launch
                 }
                 Store.push(
                     Screen.Editor(
@@ -319,11 +358,11 @@ fun RepoScreen(s: Screen.Repo) {
                         )
                     }
                 }
-                if ((repoInfo?.sizeKb ?: 0L) > 0L) {
+                if ((realUsage ?: 0L) > 0L || (repoInfo?.sizeKb ?: 0L) > 0L) {
                     item {
                         Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
                             Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
-                                QuotaBar(usedBytes = repoInfo!!.sizeKb * 1024)
+                                QuotaBar(usedBytes = realUsage ?: (repoInfo?.sizeKb ?: 0L) * 1024)
                             }
                         }
                     }
@@ -352,6 +391,8 @@ fun RepoScreen(s: Screen.Repo) {
                         items(list, key = { it.path }) { node ->
                             FileRow(
                                 node = node,
+                                dirBytes = if (node.type == "dir") dirSizes[node.path] else null,
+                                dirItems = if (node.type == "dir") dirCounts[node.path] else null,
                                 onClick = {
                                     if (node.type == "dir") openDir(node.path)
                                     else Store.push(
@@ -567,6 +608,8 @@ private fun BreadcrumbRow(path: String, onOpen: (String) -> Unit) {
 @Composable
 private fun FileRow(
     node: GhNode,
+    dirBytes: Long? = null,
+    dirItems: Int? = null,
     onClick: () -> Unit,
     onDetail: () -> Unit,
     onDownloadFile: () -> Unit,
@@ -606,7 +649,18 @@ private fun FileRow(
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                     Text(
-                        if (node.type == "dir") "folder" else formatBytes(node.size),
+                        when {
+                            node.type == "dir" -> buildString {
+                                dirItems?.let { append("$it item") }
+                                dirBytes?.let {
+                                    if (isNotEmpty()) append(" • ")
+                                    append(formatBytes(it))
+                                }
+                                if (isEmpty()) append("folder")
+                            }
+                            node.isLfs -> "LFS • ${formatBytes(node.size)}"
+                            else -> formatBytes(node.size)
+                        },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp
                     )

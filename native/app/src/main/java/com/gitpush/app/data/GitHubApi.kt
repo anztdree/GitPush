@@ -214,7 +214,7 @@ object GitHubApi {
         withContext(Dispatchers.IO) {
             val p = if (path.isEmpty()) "/repos/$owner/$repo/contents" else "/repos/$owner/$repo/contents/${Uri.encode(path, "/")}"
             val arr = callArray(token, "GET", "$p?ref=${Uri.encode(ref)}")
-            (0 until arr.length()).map { i ->
+            val nodes = (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 GhNode(
                     name = o.optString("name"),
@@ -224,19 +224,41 @@ object GitHubApi {
                     sha = o.optString("sha")
                 )
             }
+            // Urutan file manager: FOLDER dulu (A→Z), lalu file (A→Z), tidak peka huruf besar/kecil
+            val sorted = nodes.sortedWith(
+                compareBy<GhNode> { it.type != "dir" }
+                    .thenBy { it.name.lowercase() }
+                    .thenBy { it.name }
+            )
+            // Ukuran riil untuk pointer Git LFS (file besar >95 MB hanya tampak ±130 B di git tree)
+            val ptrs = resolveLfsPointers(
+                token, owner, repo,
+                sorted.filter { it.type == "file" }.map { it.sha to it.size }
+            )
+            if (ptrs.isEmpty()) sorted else sorted.map { n ->
+                ptrs[n.sha]?.let { (_, real) -> n.copy(size = real, isLfs = true) } ?: n
+            }
         }
 
     suspend fun fetchFileMeta(token: String, owner: String, repo: String, path: String, ref: String): GhFileContent =
         withContext(Dispatchers.IO) {
             val o = call(token, "GET", "/repos/$owner/$repo/contents/${Uri.encode(path, "/")}?ref=${Uri.encode(ref)}")
                 ?: throw GhException("File tidak ditemukan")
+            val b64 = if (o.isNull("content")) null else o.optString("content")
+            var size = o.optLong("size")
+            var isLfs = false
+            if (b64 != null && size in 100..600) {
+                val txt = runCatching { String(Base64.decode(b64, Base64.DEFAULT)) }.getOrDefault("")
+                lfsPointerInfo(txt)?.let { (_, real) -> size = real; isLfs = true }
+            }
             GhFileContent(
                 name = o.optString("name"),
                 path = o.optString("path"),
                 sha = o.optString("sha"),
-                size = o.optLong("size"),
+                size = size,
                 type = o.optString("type"),
-                contentB64 = if (o.isNull("content")) null else o.optString("content")
+                contentB64 = b64,
+                isLfs = isLfs
             )
         }
 
@@ -313,7 +335,7 @@ object GitHubApi {
             o.optJSONObject("object")?.optString("sha") ?: throw GhException("Branch tidak ditemukan", 404)
         }
 
-    private suspend fun commitTreeSha(token: String, owner: String, repo: String, commitSha: String): String =
+    suspend fun commitTreeSha(token: String, owner: String, repo: String, commitSha: String): String =
         withContext(Dispatchers.IO) {
             val o = call(token, "GET", "/repos/$owner/$repo/git/commits/$commitSha")
                 ?: throw GhException("Commit tidak ditemukan")
@@ -336,6 +358,92 @@ object GitHubApi {
                 )
             }
         }
+
+    // ============ GIT LFS (ukuran riil + unduh konten asli) ============
+
+    /**
+     * Deteksi pointer Git LFS dari isi blob → (oid sha256, ukuran asli) atau null.
+     * Pointer LFS memang sengaja kecil (±130 B) di git tree; ukuran asli tersimpan di baris "size N".
+     */
+    fun lfsPointerInfo(text: String): Pair<String, Long>? {
+        if (!text.startsWith("version https://git-lfs.github.com/spec/v1")) return null
+        val oid = Regex("(?m)^oid\\s+sha256:([0-9a-fA-F]{64})\\s*$").find(text)
+            ?.groupValues?.get(1)?.lowercase() ?: return null
+        val size = Regex("(?m)^size\\s+(\\d+)\\s*$").find(text)
+            ?.groupValues?.get(1)?.toLongOrNull() ?: return null
+        return oid to size
+    }
+
+    /**
+     * Selidiki blob kecil (kandidat pointer LFS: 100–600 B, maks 60 blob, 6 paralel)
+     * → peta blobSha → (oid, ukuran asli). Gagal per-blob diabaikan.
+     */
+    suspend fun resolveLfsPointers(
+        token: String, owner: String, repo: String,
+        candidates: List<Pair<String, Long>> // sha → ukuran di tree
+    ): Map<String, Pair<String, Long>> {
+        val sel = candidates.filter { it.second in 100..600 }.take(60)
+        if (sel.isEmpty()) return emptyMap()
+        val sem = Semaphore(6)
+        val out = ConcurrentHashMap<String, Pair<String, Long>>()
+        coroutineScope {
+            sel.forEach { (sha, _) ->
+                launch {
+                    sem.withPermit {
+                        runCatching {
+                            val b = fetchBlobBytes(token, owner, repo, sha)
+                            if (b.size in 40..1024) lfsPointerInfo(String(b))?.let { out[sha] = it }
+                        }
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /** href + header unduh objek LFS via batch API (URL presigned). */
+    private suspend fun lfsDownloadAction(
+        token: String, owner: String, repo: String, oid: String, size: Long
+    ): Pair<String, Map<String, String>> = withContext(Dispatchers.IO) {
+        val basic = Base64.encodeToString("$token:x-oauth-basic".toByteArray(), Base64.NO_WRAP)
+        val body = JSONObject()
+            .put("operation", "download")
+            .put("transfers", JSONArray().put("basic"))
+            .put("hash_algo", "sha256")
+            .put("objects", JSONArray().put(JSONObject().put("oid", oid).put("size", size)))
+        val (code, text, _) = callStreamed(
+            "https://github.com/$owner/$repo.git/info/lfs/objects/batch", "POST", "",
+            body.toString().toRequestBody(lfsMedia),
+            mapOf("Accept" to "application/vnd.git-lfs+json", "Authorization" to "Basic $basic")
+        )
+        if (code !in 200..299) throw GhException("Git LFS ditolak (HTTP $code): ${text.take(140)}", code)
+        val obj = JSONObject(text).optJSONArray("objects")?.optJSONObject(0)
+            ?: throw GhException("Respons Git LFS tidak valid")
+        obj.optJSONObject("error")?.let { e ->
+            throw GhException("Git LFS: ${e.optString("message", "gagal")}", e.optInt("code"))
+        }
+        val dl = obj.optJSONObject("actions")?.optJSONObject("download")
+            ?: throw GhException("Objek LFS tidak ditemukan di penyimpanan Git LFS")
+        val href = dl.optString("href").takeIf { it.isNotEmpty() }
+            ?: throw GhException("URL unduh LFS tidak tersedia")
+        val headers = mutableMapOf<String, String>()
+        dl.optJSONObject("header")?.let { h -> h.keys().forEach { k -> headers[k] = h.optString(k) } }
+        href to headers
+    }
+
+    /** Unduh konten ASLI objek LFS langsung ke OutputStream (streaming, hemat RAM). */
+    suspend fun streamLfsContent(
+        token: String, owner: String, repo: String, oid: String, size: Long, out: OutputStream
+    ): Unit = withContext(Dispatchers.IO) {
+        val (href, extraHeaders) = lfsDownloadAction(token, owner, repo, oid, size)
+        val b = Request.Builder().url(href).header("User-Agent", "GitPush-Android")
+        extraHeaders.forEach { (k, v) -> b.header(k, v) }
+        http.newCall(b.build()).execute().use { r ->
+            if (!r.isSuccessful) throw GhException("Gagal mengunduh objek LFS (HTTP ${r.code})")
+            r.body?.byteStream()?.use { src -> src.copyTo(out, 256 * 1024) }
+                ?: throw GhException("Stream LFS kosong")
+        }
+    }
 
     // ============ BULK UPLOAD (1 COMMIT — TANPA LIMIT UKURAN/JUMLAH) ============
 
@@ -904,7 +1012,7 @@ object GitHubApi {
 
     // ============ DOWNLOAD & ZIP ============
 
-    fun saveToDownloads(context: Context, fileName: String, mime: String, writer: (OutputStream) -> Unit): String {
+    suspend fun saveToDownloads(context: Context, fileName: String, mime: String, writer: suspend (OutputStream) -> Unit): String {
         val resolver = context.contentResolver
         val cv = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, fileName)
@@ -926,6 +1034,10 @@ object GitHubApi {
         return "Download/GitPush/$fileName"
     }
 
+    /**
+     * Unduh satu file. Pointer Git LFS otomatis di-resolve → konten ASLI di-stream
+     * dari penyimpanan LFS ke Download (bukan pointer ±130 B).
+     */
     suspend fun downloadFile(
         context: Context, token: String, owner: String, repo: String, node: GhNode, ref: String
     ): String = withContext(Dispatchers.IO) {
@@ -935,7 +1047,15 @@ object GitHubApi {
         } else {
             fetchBlobBytes(token, owner, repo, meta.sha)
         }
-        saveToDownloads(context, node.name, "application/octet-stream") { it.write(bytes) }
+        val ptr = lfsPointerInfo(String(bytes))
+        if (ptr != null) {
+            val (oid, realSize) = ptr
+            saveToDownloads(context, node.name, "application/octet-stream") { out ->
+                streamLfsContent(token, owner, repo, oid, realSize, out)
+            }
+        } else {
+            saveToDownloads(context, node.name, "application/octet-stream") { it.write(bytes) }
+        }
     }
 
     private suspend fun collectBlobs(
@@ -952,24 +1072,29 @@ object GitHubApi {
         all.filter { it.type == "blob" && (prefix.isEmpty() || it.path.startsWith("$prefix/")) }
     }
 
+    /**
+     * Rakit ZIP per-entry (streaming — satu file di RAM dalam satu waktu).
+     * Pointer Git LFS di-resolve dan konten aslinya di-stream dari penyimpanan LFS.
+     */
     private suspend fun zipBlobs(
         context: Context, zipName: String, token: String, owner: String, repo: String,
         blobs: List<TreeNode>, onProgress: (Int, Int) -> Unit
     ): Unit = withContext(Dispatchers.IO) {
-        val totalSize = blobs.sumOf { it.size }
-        if (blobs.size > 400) throw GhException("Terlalu banyak file (${blobs.size}). Maksimal 400 file per unduhan ZIP.")
-        if (totalSize > 150L * 1024 * 1024) throw GhException("Total ukuran melebihi 150 MB — unduh manual lewat web GitHub")
-        val contents = ArrayList<ByteArray>(blobs.size)
-        blobs.forEachIndexed { i, n ->
-            contents.add(fetchBlobBytes(token, owner, repo, n.sha))
-            onProgress(i + 1, blobs.size)
+        if (blobs.size > 1500) throw GhException("Terlalu banyak file (${blobs.size}). Maksimal 1500 file per unduhan ZIP.")
+        val ptrs = resolveLfsPointers(token, owner, repo, blobs.map { it.sha to it.size })
+        val totalSize = blobs.sumOf { ptrs[it.sha]?.second ?: it.size }
+        if (totalSize > 500L * 1024 * 1024) {
+            throw GhException("Total ukuran melebihi 500 MB — unduh per folder lewat menu folder")
         }
         saveToDownloads(context, zipName, "application/zip") { out ->
-            ZipOutputStream(BufferedOutputStream(out, 128 * 1024)).use { zip ->
-                contents.forEachIndexed { i, bytes ->
-                    zip.putNextEntry(ZipEntry(blobs[i].path))
-                    zip.write(bytes)
+            ZipOutputStream(BufferedOutputStream(out, 256 * 1024)).use { zip ->
+                blobs.forEachIndexed { i, n ->
+                    zip.putNextEntry(ZipEntry(n.path))
+                    val p = ptrs[n.sha]
+                    if (p != null) streamLfsContent(token, owner, repo, p.first, p.second, zip)
+                    else zip.write(fetchBlobBytes(token, owner, repo, n.sha))
                     zip.closeEntry()
+                    onProgress(i + 1, blobs.size)
                 }
             }
         }
@@ -989,26 +1114,11 @@ object GitHubApi {
         context: Context, token: String, owner: String, repo: String, branch: String,
         isPrivate: Boolean, onProgress: (Int, Int) -> Unit
     ): String = withContext(Dispatchers.IO) {
-        if (isPrivate) {
-            val blobs = collectBlobs(token, owner, repo, branch, "")
-            val zipName = "$repo-$branch.zip"
-            zipBlobs(context, zipName, token, owner, repo, blobs, onProgress)
-            zipName
-        } else {
-            val req = Request.Builder()
-                .url("$API/repos/$owner/$repo/zipball/${Uri.encode(branch)}")
-                .header("User-Agent", "GitPush-Android")
-                .header("Accept", "application/vnd.github+json")
-                .build()
-            val fileName = "$repo-$branch.zip"
-            http.newCall(req).execute().use { r ->
-                if (!r.isSuccessful) throw GhException("Gagal mengunduh repository (HTTP ${r.code})")
-                saveToDownloads(context, fileName, "application/zip") { out ->
-                    r.body?.byteStream()?.use { src -> src.copyTo(out, 128 * 1024) }
-                        ?: throw GhException("Stream kosong")
-                }
-            }
-            fileName
-        }
+        // Selalu rakit ZIP sendiri: zipball bawaan GitHub memuat pointer LFS (±130 B),
+        // bukan isi aslinya. Jalur ini men-resolve objek LFS sehingga ZIP berisi file utuh.
+        val blobs = collectBlobs(token, owner, repo, branch, "")
+        val zipName = "$repo-$branch.zip"
+        zipBlobs(context, zipName, token, owner, repo, blobs, onProgress)
+        zipName
     }
 }

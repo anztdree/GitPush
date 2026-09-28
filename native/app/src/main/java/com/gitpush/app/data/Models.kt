@@ -35,7 +35,8 @@ data class GhNode(
     val path: String,
     val type: String, // "file" | "dir"
     val size: Long,
-    val sha: String
+    val sha: String,
+    val isLfs: Boolean = false // true = file Git LFS (ukuran riil sudah dihitung dari pointer)
 )
 
 data class GhBranch(val name: String, val commitSha: String)
@@ -64,7 +65,8 @@ data class GhFileContent(
     val sha: String,
     val size: Long,
     val type: String,
-    val contentB64: String?
+    val contentB64: String?,
+    val isLfs: Boolean = false // pointer LFS terdeteksi (size = ukuran asli)
 )
 
 data class TreeNode(
@@ -72,7 +74,8 @@ data class TreeNode(
     val sha: String,
     val type: String, // "blob" | "tree"
     val size: Long,
-    val mode: String = "100644"
+    val mode: String = "100644",
+    val isLfs: Boolean = false
 )
 
 data class HistoryEntry(
