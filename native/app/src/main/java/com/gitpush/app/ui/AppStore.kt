@@ -47,6 +47,14 @@ object Store {
     val unread = mutableStateOf(0)
     val repos = mutableStateOf<List<GhRepo>>(emptyList())
 
+    /**
+     * Posisi folder terakhir per repo+branch, kunci "fullName@branch" → path.
+     * RepoScreen dicabut dari komposisi saat Viewer/Editor ditumpuk di atasnya —
+     * peta ini menjaga posisi folder agar kembali dari lihat/edit file tidak
+     * melompat balik ke root.
+     */
+    val lastRepoPath = HashMap<String, String>()
+
     var prefs: Prefs? = null
         private set
 

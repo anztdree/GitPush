@@ -2,6 +2,9 @@ package com.gitpush.app.ui
 
 import android.util.Base64
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
@@ -76,7 +80,8 @@ fun RepoScreen(s: Screen.Repo) {
     val toast: (String) -> Unit = { Toast.makeText(ctx, it, Toast.LENGTH_LONG).show() }
 
     var branch by remember { mutableStateOf(s.defaultBranch) }
-    var path by remember { mutableStateOf("") }
+    // Pulihkan posisi folder terakhir (bertahan saat Viewer/Editor ditumpuk di atas layar ini)
+    var path by remember { mutableStateOf(Store.lastRepoPath["${s.fullName}@${s.defaultBranch}"] ?: "") }
     var nodes by remember { mutableStateOf<List<GhNode>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var branches by remember { mutableStateOf<List<GhBranch>>(emptyList()) }
@@ -110,11 +115,18 @@ fun RepoScreen(s: Screen.Repo) {
                     GitHubApi.fetchContents(Store.token.value, s.owner, s.name, p, branch)
                 }
                 path = p
+                Store.lastRepoPath["${s.fullName}@$branch"] = p
             } catch (e: Exception) {
                 error = GitHubApi.humanError(e)
                 nodes = emptyList()
             }
         }
+    }
+
+    // Tombol/gestur back ala file manager: naik satu folder dulu;
+    // saat sudah di root, back keluar dari layar repo (BackHandler MainScaffold).
+    BackHandler(enabled = path.isNotEmpty()) {
+        openDir(path.substringBeforeLast('/', ""))
     }
 
     val reloadMeta: () -> Unit = {
@@ -143,7 +155,8 @@ fun RepoScreen(s: Screen.Repo) {
         loadRepoInfo()
     }
     LaunchedEffect(branch) {
-        openDir("")
+        // Pulihkan folder terakhir branch ini (root bila belum pernah navigasi)
+        openDir(Store.lastRepoPath["${s.fullName}@$branch"] ?: "")
         reloadMeta()
         // Latar belakang: ukuran per folder + total pemakaian riil (termasuk objek Git LFS)
         scope.launch {
@@ -268,7 +281,9 @@ fun RepoScreen(s: Screen.Repo) {
             Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { Store.pop() }) {
+            IconButton(onClick = {
+                if (path.isNotEmpty()) openDir(path.substringBeforeLast('/', "")) else Store.pop()
+            }) {
                 Icon(Icons.Filled.ArrowBack, contentDescription = "Kembali")
             }
             Column(Modifier.weight(1f)) {
@@ -583,14 +598,18 @@ private fun BreadcrumbRow(path: String, onOpen: (String) -> Unit) {
     if (path.isEmpty()) return
     val parts = path.split("/")
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+        Modifier.fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             "root",
             color = BlueAccent,
             fontSize = 12.sp,
-            modifier = Modifier.padding(vertical = 6.dp)
+            modifier = Modifier
+                .padding(vertical = 6.dp)
+                .clickable { onOpen("") }
         )
         parts.forEachIndexed { i, p ->
             Text("  /  ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
@@ -599,7 +618,9 @@ private fun BreadcrumbRow(path: String, onOpen: (String) -> Unit) {
                 color = BlueAccent,
                 fontSize = 12.sp,
                 fontWeight = if (i == parts.size - 1) FontWeight.SemiBold else FontWeight.Normal,
-                modifier = Modifier.padding(vertical = 6.dp)
+                modifier = Modifier
+                    .padding(vertical = 6.dp)
+                    .clickable { onOpen(parts.take(i + 1).joinToString("/")) }
             )
         }
     }

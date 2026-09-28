@@ -277,3 +277,20 @@ Stage Summary:
 - Ukuran file/folder/kuota kini akurat termasuk objek Git LFS; unduhan file & ZIP berisi konten asli (bukan pointer).
 - Urutan listing: folder dulu (A→Z), lalu file (A→Z), tidak peka kapital.
 - Artefak: native/app/build/outputs/apk/release/app-release.apk (versionCode 5), salinan /home/z/my-project/GitPush-v1.1.apk.
+
+---
+Task ID: 12
+Agent: Z.ai Code (main)
+Task: Fix navigasi back folder — "tidak bisa kembali ke folder sebelumnya, hanya ke folder awal"
+
+Work Log:
+- Diagnosis dua akar masalah: (1) BackHandler MainScaffold selalu Store.pop() → gestur/tombol back keluar dari seluruh layar repo di kedalaman folder apa pun; (2) saat Viewer/Editor ditumpuk, RepoScreen dicabut dari komposisi → state path hilang → kembali selalu ke root. Bonus: BreadcrumbRow tidak clickable sama sekali.
+- AppStore.kt: tambah Store.lastRepoPath (HashMap "fullName@branch" → path) sebagai memori posisi folder lintas komposisi.
+- RepoScreen.kt: (a) path di-seed dari Store.lastRepoPath saat recompose; (b) LaunchedEffect(branch) membuka folder tersimpan branch tsb (root bila belum ada); (c) openDir menyimpan posisi ke Store; (d) BackHandler(enabled = path.isNotEmpty()) → back naik satu folder, di root baru keluar layar (fallback MainScaffold); (e) tombol panah kiri header sama perilakunya; (f) BreadcrumbRow kini clickable (root + tiap segmen, horizontal scroll untuk path panjang).
+- Build: versionCode 6 (versionName 1.1), assembleRelease sukses 3.1 MB.
+
+Stage Summary:
+- Back = naik folder per folder (ala file manager); root → keluar layar repo.
+- Posisi folder bertahan saat membuka file/editor, ganti tab, dan kembali ke repo yang sama.
+- Breadcrumb clickable untuk lompat ke folder mana pun di jalur.
+- Artefak: GitPush-v1.1.apk versionCode 6 di Release v1.1 (aset diganti).
