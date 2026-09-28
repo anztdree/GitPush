@@ -5,7 +5,9 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,16 +21,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
@@ -40,6 +46,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -64,6 +71,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.gitpush.app.data.GhBranch
 import com.gitpush.app.data.GhCommit
 import com.gitpush.app.data.GhNode
@@ -88,7 +96,9 @@ fun RepoScreen(s: Screen.Repo) {
     var showBranchMenu by remember { mutableStateOf(false) }
     var commits by remember { mutableStateOf<List<GhCommit>>(emptyList()) }
     var readme by remember { mutableStateOf<String?>(null) }
-    var zipProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var showHistory by remember { mutableStateOf(false) }
+    var showReadme by remember { mutableStateOf(false) }
+    var moveTarget by remember { mutableStateOf<GhNode?>(null) }
     var renameTarget by remember { mutableStateOf<GhNode?>(null) }
     var deleteTarget by remember { mutableStateOf<GhNode?>(null) }
     var showRepoMenu by remember { mutableStateOf(false) }
@@ -212,52 +222,61 @@ fun RepoScreen(s: Screen.Repo) {
 
     val downloadRepo: () -> Unit = {
         scope.launch {
-            zipProgress = 0 to 0
+            Store.showOp("Unduh repository (ZIP)", s.fullName, unit = "file")
+            Store.opDetail("Mengumpulkan daftar file…")
             try {
                 val zipName = withContext(Dispatchers.IO) {
                     GitHubApi.downloadRepoZip(
                         ctx, Store.token.value, s.owner, s.name, branch, s.isPrivate
-                    ) { d, t -> zipProgress = d to t }
+                    ) { d, t, cur -> Store.opStep(d.toLong(), t.toLong(), cur.substringAfterLast('/')) }
                 }
                 Store.log("download", "Download repository → $zipName", s.fullName)
                 toast("Repository tersimpan di Download/GitPush/$zipName")
             } catch (e: Exception) {
                 toast("Gagal: ${GitHubApi.humanError(e)}")
             } finally {
-                zipProgress = null
+                Store.hideOp()
             }
         }
     }
 
     val downloadFolder: (GhNode) -> Unit = { node ->
         scope.launch {
-            zipProgress = 0 to 0
+            Store.showOp("Unduh folder (ZIP)", node.name, unit = "file")
+            Store.opDetail("Mengumpulkan daftar file…")
             try {
                 val zipName = withContext(Dispatchers.IO) {
                     GitHubApi.downloadFolderZip(
                         ctx, Store.token.value, s.owner, s.name, branch, node.path
-                    ) { d, t -> zipProgress = d to t }
+                    ) { d, t, cur -> Store.opStep(d.toLong(), t.toLong(), cur.substringAfterLast('/')) }
                 }
                 Store.log("download", "Download folder → $zipName", s.fullName)
                 toast("Folder tersimpan di Download/GitPush/$zipName")
             } catch (e: Exception) {
                 toast("Gagal: ${GitHubApi.humanError(e)}")
             } finally {
-                zipProgress = null
+                Store.hideOp()
             }
         }
     }
 
     val downloadFile: (GhNode) -> Unit = { node ->
         scope.launch {
+            Store.showOp("Mengunduh file", node.name)
             try {
                 val loc = withContext(Dispatchers.IO) {
-                    GitHubApi.downloadFile(ctx, Store.token.value, s.owner, s.name, node, branch)
+                    GitHubApi.downloadFile(
+                        ctx, Store.token.value, s.owner, s.name, node, branch,
+                        onStage = { Store.opDetail(it) },
+                        onProgress = { sent, total -> Store.opProgress(sent, total) }
+                    )
                 }
                 Store.log("download", "Download ${node.name}", s.fullName)
                 toast("Tersimpan: $loc")
             } catch (e: Exception) {
                 toast("Gagal: ${GitHubApi.humanError(e)}")
+            } finally {
+                Store.hideOp()
             }
         }
     }
@@ -395,18 +414,40 @@ fun RepoScreen(s: Screen.Repo) {
                     BreadcrumbRow(path, onOpen = { openDir(it) })
                 }
                 item {
+                    // Tombol Riwayat commit & README berdampingan — isi repo tetap fokus ala file manager
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { showHistory = true },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
+                        ) {
+                            Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.size(15.dp), tint = BlueAccent)
+                            Spacer(Modifier.size(6.dp))
+                            Text("Riwayat commit", maxLines = 1, fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { showReadme = true },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
+                        ) {
+                            Icon(Icons.Filled.Article, contentDescription = null, modifier = Modifier.size(15.dp), tint = GreenPrimary)
+                            Spacer(Modifier.size(6.dp))
+                            Text("README", maxLines = 1, fontSize = 12.sp)
+                        }
+                    }
+                }
+                item {
                     Button(
-                        onClick = { if (zipProgress == null) downloadRepo() },
-                        enabled = zipProgress == null,
+                        onClick = { downloadRepo() },
                         colors = ButtonDefaults.buttonColors(containerColor = GreenDeep),
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
                     ) {
                         Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.size(8.dp))
-                        Text(
-                            if (zipProgress != null) "Mengunduh repository…" else "Download repository (ZIP)",
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Text("Download repository (ZIP)", fontWeight = FontWeight.SemiBold)
                     }
                 }
                 if ((realUsage ?: 0L) > 0L || (repoInfo?.sizeKb ?: 0L) > 0L) {
@@ -459,60 +500,9 @@ fun RepoScreen(s: Screen.Repo) {
                                 onDownloadFolder = { downloadFolder(node) },
                                 onEdit = { openEditor(node) },
                                 onRename = { renameTarget = node },
+                                onMove = { moveTarget = node },
                                 onDelete = { deleteTarget = node }
                             )
-                        }
-                    }
-                }
-                if (commits.isNotEmpty()) {
-                    item {
-                        Text(
-                            "Commit terbaru",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 4.dp)
-                        )
-                    }
-                    items(commits, key = { "c-${it.sha}" }) { c ->
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
-                                    shape = RoundedCornerShape(5.dp)
-                                ) {
-                                    Text(
-                                        c.sha.take(7),
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp,
-                                        color = BlueAccent,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                                Spacer(Modifier.size(8.dp))
-                                Text(
-                                    c.message.lineSequence().firstOrNull() ?: "",
-                                    fontSize = 12.sp,
-                                    maxLines = 1,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                )
-                            }
-                            Text(
-                                "${c.author} • ${timeAgo(c.date)}",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                        }
-                    }
-                }
-                if (readme != null && path.isEmpty()) {
-                    item {
-                        Card(Modifier.fillMaxWidth().padding(16.dp)) {
-                            Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                                Text("README.md", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                Spacer(Modifier.height(8.dp))
-                                MarkdownText(readme!!)
-                            }
                         }
                     }
                 }
@@ -521,33 +511,24 @@ fun RepoScreen(s: Screen.Repo) {
         }
     }
 
-    if (zipProgress != null) {
-        Dialog(onDismissRequest = { }) {
-            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
-                Column(Modifier.fillMaxWidth().padding(20.dp)) {
-                    Text("Mengunduh ZIP…", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Spacer(Modifier.height(12.dp))
-                    val (d, t) = zipProgress!!
-                    if (t > 0) {
-                        LinearProgressIndicator(
-                            progress = { d.toFloat() / t },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = GreenPrimary
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text("$d / $t file", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = GreenPrimary)
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Mengumpulkan file…",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
+    if (showHistory) {
+        CommitHistoryDialog(
+            owner = s.owner,
+            name = s.name,
+            branch = branch,
+            preloaded = commits,
+            onDismiss = { showHistory = false }
+        )
+    }
+
+    if (showReadme) {
+        ReadmeDialog(
+            owner = s.owner,
+            name = s.name,
+            branch = branch,
+            preloaded = readme,
+            onDismiss = { showReadme = false }
+        )
     }
 
     renameTarget?.let { node ->
@@ -559,10 +540,14 @@ fun RepoScreen(s: Screen.Repo) {
             onDone = { old, new ->
                 renameTarget = null
                 scope.launch {
+                    Store.showOp(if (node.type == "dir") "Rename folder" else "Rename file", "$old → $new")
                     try {
                         if (node.type == "dir") {
                             val (_, n) = withContext(Dispatchers.IO) {
-                                GitHubApi.renameFolder(Store.token.value, s.owner, s.name, branch, old, new)
+                                GitHubApi.renameFolder(
+                                    Store.token.value, s.owner, s.name, branch, old, new,
+                                    onStage = { Store.opDetail(it) }
+                                )
                             }
                             GitHubApi.invalidateUsage(s.owner, s.name)
                             folderCache.clear()
@@ -571,7 +556,10 @@ fun RepoScreen(s: Screen.Repo) {
                             openDir(navUpPath(path, old))
                         } else {
                             withContext(Dispatchers.IO) {
-                                GitHubApi.renameFile(Store.token.value, s.owner, s.name, branch, old, new)
+                                GitHubApi.renameFile(
+                                    Store.token.value, s.owner, s.name, branch, old, new,
+                                    onStage = { Store.opDetail(it) }
+                                )
                             }
                             GitHubApi.invalidateUsage(s.owner, s.name)
                             folderCache.clear()
@@ -582,6 +570,57 @@ fun RepoScreen(s: Screen.Repo) {
                         loadRepoInfo()
                     } catch (e: Exception) {
                         toast("Gagal: ${GitHubApi.humanError(e)}")
+                    } finally {
+                        Store.hideOp()
+                    }
+                }
+            }
+        )
+    }
+
+    moveTarget?.let { node ->
+        MoveDialog(
+            node = node,
+            owner = s.owner,
+            name = s.name,
+            branch = branch,
+            startDir = path,
+            onDismiss = { moveTarget = null },
+            onDone = { old, new ->
+                moveTarget = null
+                scope.launch {
+                    Store.showOp(if (node.type == "dir") "Pindah folder" else "Pindah file", "$old → $new")
+                    try {
+                        if (node.type == "dir") {
+                            val (_, n) = withContext(Dispatchers.IO) {
+                                GitHubApi.renameFolder(
+                                    Store.token.value, s.owner, s.name, branch, old, new,
+                                    onStage = { Store.opDetail(it) }
+                                )
+                            }
+                            GitHubApi.invalidateUsage(s.owner, s.name)
+                            folderCache.clear()
+                            Store.log("move", "Pindah folder ${old.substringAfterLast('/')} → $new", s.fullName)
+                            toast("Folder dipindah ✓ ($n file)")
+                            openDir(navUpPath(path, old))
+                        } else {
+                            withContext(Dispatchers.IO) {
+                                GitHubApi.renameFile(
+                                    Store.token.value, s.owner, s.name, branch, old, new,
+                                    onStage = { Store.opDetail(it) }
+                                )
+                            }
+                            GitHubApi.invalidateUsage(s.owner, s.name)
+                            folderCache.clear()
+                            Store.log("move", "Pindah ${old.substringAfterLast('/')} → $new", s.fullName)
+                            toast("File dipindah ✓")
+                            openDir(path)
+                        }
+                        loadRepoInfo()
+                    } catch (e: Exception) {
+                        toast("Gagal: ${GitHubApi.humanError(e)}")
+                    } finally {
+                        Store.hideOp()
                     }
                 }
             }
@@ -595,10 +634,14 @@ fun RepoScreen(s: Screen.Repo) {
             onDone = {
                 deleteTarget = null
                 scope.launch {
+                    Store.showOp(if (node.type == "dir") "Hapus folder" else "Hapus file", node.path)
                     try {
                         if (node.type == "dir") {
                             val (_, n) = withContext(Dispatchers.IO) {
-                                GitHubApi.deleteFolder(Store.token.value, s.owner, s.name, branch, node.path)
+                                GitHubApi.deleteFolder(
+                                    Store.token.value, s.owner, s.name, branch, node.path,
+                                    onStage = { Store.opDetail(it) }
+                                )
                             }
                             GitHubApi.invalidateUsage(s.owner, s.name)
                             folderCache.clear()
@@ -621,6 +664,8 @@ fun RepoScreen(s: Screen.Repo) {
                         loadRepoInfo()
                     } catch (e: Exception) {
                         toast("Gagal: ${GitHubApi.humanError(e)}")
+                    } finally {
+                        Store.hideOp()
                     }
                 }
             }
@@ -693,6 +738,7 @@ private fun FileRow(
     onDownloadFolder: () -> Unit,
     onEdit: () -> Unit,
     onRename: () -> Unit,
+    onMove: () -> Unit,
     onDelete: () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -705,23 +751,14 @@ private fun FileRow(
             color = MaterialTheme.colorScheme.background,
             modifier = Modifier.weight(1f)
         ) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    when {
-                        node.type == "dir" -> Icons.Filled.Folder
-                        isImageFile(node.name) -> Icons.Filled.Image
-                        isTextFile(node.name) -> Icons.Filled.Code
-                        else -> Icons.Filled.Description
-                    },
-                    contentDescription = null,
-                    tint = if (node.type == "dir") BlueAccent else GrayMuted,
-                    modifier = Modifier.size(20.dp)
-                )
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                FileTypeBadge(node.name, node.type == "dir", size = 38.dp, iconSize = 20.dp)
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         node.name,
                         fontSize = 14.sp,
+                        fontWeight = if (node.type == "dir") FontWeight.SemiBold else FontWeight.Normal,
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
@@ -750,9 +787,19 @@ private fun FileRow(
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             if (node.type == "dir") {
                 DropdownMenuItem(
+                    text = { Text("Buka folder") },
+                    leadingIcon = { Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(17.dp), tint = FilePalette.Folder) },
+                    onClick = { menu = false; onClick() }
+                )
+                DropdownMenuItem(
                     text = { Text("Download folder (ZIP)") },
                     leadingIcon = { Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(17.dp)) },
                     onClick = { menu = false; onDownloadFolder() }
+                )
+                DropdownMenuItem(
+                    text = { Text("Pindah folder") },
+                    leadingIcon = { Icon(Icons.Filled.DriveFileMove, contentDescription = null, modifier = Modifier.size(17.dp), tint = BlueAccent) },
+                    onClick = { menu = false; onMove() }
                 )
                 DropdownMenuItem(
                     text = { Text("Rename folder") },
@@ -776,12 +823,18 @@ private fun FileRow(
                     onClick = { menu = false; onDownloadFile() }
                 )
                 DropdownMenuItem(
+                    text = { Text("Pindah") },
+                    leadingIcon = { Icon(Icons.Filled.DriveFileMove, contentDescription = null, modifier = Modifier.size(17.dp), tint = BlueAccent) },
+                    onClick = { menu = false; onMove() }
+                )
+                DropdownMenuItem(
                     text = { Text("Edit") },
                     leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(17.dp)) },
                     onClick = { menu = false; onEdit() }
                 )
                 DropdownMenuItem(
                     text = { Text("Rename") },
+                    leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(17.dp), tint = GrayMuted) },
                     onClick = { menu = false; onRename() }
                 )
                 DropdownMenuItem(
@@ -894,6 +947,353 @@ private fun DeleteDialog(
         confirmButton = {
             TextButton(onClick = { if (msg.isNotBlank()) onDone(msg.trim()) }) {
                 Text("Hapus", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } }
+    )
+}
+
+// ============ RIWAYAT COMMIT (dialog — tidak membanjiri layar repo) ============
+
+@Composable
+private fun CommitHistoryDialog(
+    owner: String, name: String, branch: String,
+    preloaded: List<GhCommit>,
+    onDismiss: () -> Unit
+) {
+    var list by remember { mutableStateOf(preloaded) }
+    var loading by remember { mutableStateOf(preloaded.isEmpty()) }
+    var err by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(branch) {
+        if (preloaded.isNotEmpty()) return@LaunchedEffect
+        try {
+            list = withContext(Dispatchers.IO) {
+                GitHubApi.fetchCommits(Store.token.value, owner, name, branch)
+            }
+        } catch (e: Exception) {
+            err = GitHubApi.humanError(e)
+        } finally {
+            loading = false
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Tutup")
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("Riwayat commit", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text("$name@$branch", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                when {
+                    loading -> Row(
+                        Modifier.fillMaxWidth().padding(40.dp),
+                        horizontalArrangement = Arrangement.Center
+                    ) { CircularProgressIndicator(color = GreenPrimary, strokeWidth = 2.dp, modifier = Modifier.size(24.dp)) }
+                    err != null -> Text(
+                        err!!,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(24.dp)
+                    )
+                    list.isEmpty() -> Text(
+                        "Belum ada commit pada branch ini.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(24.dp)
+                    )
+                    else -> LazyColumn(Modifier.fillMaxSize()) {
+                        items(list, key = { it.sha }) { c ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                FileTypeBadge("${c.sha.take(7)}.txt", false, size = 34.dp, iconSize = 17.dp)
+                                Spacer(Modifier.size(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        c.message.lineSequence().firstOrNull() ?: "",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                    Spacer(Modifier.height(3.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.surfaceVariant,
+                                            shape = RoundedCornerShape(5.dp)
+                                        ) {
+                                            Text(
+                                                c.sha.take(7),
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 11.sp,
+                                                color = BlueAccent,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.size(8.dp))
+                                        Text(
+                                            "${c.author} • ${timeAgo(c.date)}",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                modifier = Modifier.padding(start = 62.dp)
+                            )
+                        }
+                        item { Spacer(Modifier.height(24.dp)) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============ README (dialog layar penuh — render markdown) ============
+
+@Composable
+private fun ReadmeDialog(
+    owner: String, name: String, branch: String,
+    preloaded: String?,
+    onDismiss: () -> Unit
+) {
+    var md by remember { mutableStateOf(preloaded) }
+    var loading by remember { mutableStateOf(preloaded == null) }
+    var err by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(branch) {
+        if (preloaded != null) return@LaunchedEffect
+        try {
+            md = withContext(Dispatchers.IO) {
+                GitHubApi.fetchReadme(Store.token.value, owner, name, branch)
+            }
+        } catch (e: Exception) {
+            err = GitHubApi.humanError(e)
+        } finally {
+            loading = false
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Tutup")
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("README.md", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        Text("$name@$branch", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                when {
+                    loading -> Row(
+                        Modifier.fillMaxWidth().padding(40.dp),
+                        horizontalArrangement = Arrangement.Center
+                    ) { CircularProgressIndicator(color = GreenPrimary, strokeWidth = 2.dp, modifier = Modifier.size(24.dp)) }
+                    err != null -> Text(
+                        err!!,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(24.dp)
+                    )
+                    md == null -> Column(
+                        Modifier.fillMaxSize().padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        FileTypeBadge("README.md", false, size = 52.dp, iconSize = 28.dp)
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            "Repository ini belum punya README.md",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp
+                        )
+                    }
+                    else -> Column(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp, vertical = 12.dp)
+                    ) {
+                        MarkdownText(md!!)
+                        Spacer(Modifier.height(30.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============ PINDAH FILE/FOLDER (pilih folder tujuan) ============
+
+/**
+ * Dialog pindah: jelajahi folder repository (breadcrumb ala file manager),
+ * pilih folder tujuan, konfirmasi. Move = 1 commit via Git Data API.
+ */
+@Composable
+private fun MoveDialog(
+    node: GhNode,
+    owner: String,
+    name: String,
+    branch: String,
+    startDir: String,
+    onDismiss: () -> Unit,
+    onDone: (String, String) -> Unit
+) {
+    val isFolder = node.type == "dir"
+    var dest by remember { mutableStateOf(startDir) }
+    var dirs by remember { mutableStateOf<List<String>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var err by remember { mutableStateOf<String?>(null) }
+    var clash by remember { mutableStateOf(false) }
+
+    suspend fun loadDirs(p: String) {
+        loading = true
+        err = null
+        clash = false
+        try {
+            val nodes = withContext(Dispatchers.IO) {
+                GitHubApi.fetchContents(Store.token.value, owner, name, p, branch)
+            }
+            dirs = nodes.filter { it.type == "dir" }.map { it.name }
+            clash = nodes.any { it.name == node.name }
+        } catch (e: Exception) {
+            err = GitHubApi.humanError(e)
+            dirs = emptyList()
+        } finally {
+            loading = false
+        }
+    }
+
+    LaunchedEffect(dest) { loadDirs(dest) }
+
+    // Validasi tujuan
+    val newPath = if (dest.isEmpty()) node.name else "$dest/${node.name}"
+    val invalidSelf = isFolder && (dest == node.path || dest.startsWith("${node.path}/"))
+    val invalidSame = newPath == node.path
+    val canMove = !invalidSelf && !invalidSame && !clash && !loading
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                if (isFolder) "Pindah folder" else "Pindah file",
+                fontWeight = FontWeight.Bold,
+                fontSize = 17.sp
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    node.path,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(10.dp))
+                // Breadcrumb tujuan
+                Row(
+                    Modifier.fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "root",
+                        color = BlueAccent,
+                        fontSize = 12.sp,
+                        modifier = Modifier.clickable { dest = "" }
+                    )
+                    if (dest.isNotEmpty()) {
+                        val parts = dest.split("/")
+                        parts.forEachIndexed { i, p ->
+                            Text("  /  ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                            Text(
+                                p,
+                                color = BlueAccent,
+                                fontSize = 12.sp,
+                                fontWeight = if (i == parts.size - 1) FontWeight.SemiBold else FontWeight.Normal,
+                                modifier = Modifier.clickable { dest = parts.take(i + 1).joinToString("/") }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                // Daftar folder di tujuan
+                Box(Modifier.fillMaxWidth().height(220.dp)) {
+                    when {
+                        loading -> Row(
+                            Modifier.fillMaxWidth().padding(20.dp),
+                            horizontalArrangement = Arrangement.Center
+                        ) { CircularProgressIndicator(color = GreenPrimary, strokeWidth = 2.dp, modifier = Modifier.size(22.dp)) }
+                        err != null -> Text(err!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                        dirs.isEmpty() -> Text(
+                            "Tidak ada subfolder di sini.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
+                        else -> Column(Modifier.verticalScroll(rememberScrollState())) {
+                            dirs.forEach { d ->
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .clickable { dest = if (dest.isEmpty()) d else "$dest/$d" }
+                                        .padding(vertical = 9.dp, horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Folder,
+                                        contentDescription = null,
+                                        tint = FilePalette.Folder,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(Modifier.size(10.dp))
+                                    Text(d, fontSize = 14.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Path baru: $newPath",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (canMove) GreenPrimary else MaterialTheme.colorScheme.error
+                )
+                if (invalidSelf) Text(
+                    "Tidak bisa memindah folder ke dalam dirinya sendiri.",
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 11.sp
+                )
+                if (clash) Text(
+                    "Sudah ada item bernama \"${node.name}\" di folder tujuan.",
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 11.sp
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = canMove, onClick = { onDone(node.path, newPath) }) {
+                Text("Pindah ke sini", color = if (canMove) BlueAccent else GrayMuted)
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Batal") } }

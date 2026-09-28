@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderShared
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
@@ -205,7 +206,7 @@ fun HomeScreen() {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RepoCard(repo: GhRepo, usage: Long?, onLongClick: () -> Unit) {
-    val shape = RoundedCornerShape(14.dp)
+    val shape = RoundedCornerShape(16.dp)
     Card(
         shape = shape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -223,70 +224,80 @@ private fun RepoCard(repo: GhRepo, usage: Long?, onLongClick: () -> Unit) {
                 )
             },
             onLongClick = onLongClick
-        ).border(1.dp, MaterialTheme.colorScheme.outline, shape)
+        ).border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), shape)
     ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    repo.name,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                    color = BlueAccent,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.Top) {
+            // Badge ikon repo (bentuk kubah folder berwarna — identitas file manager)
+            Box(
+                Modifier.size(42.dp).background(
+                    if (repo.isPrivate) BlueAccent.copy(alpha = 0.14f) else GreenPrimary.copy(alpha = 0.14f),
+                    RoundedCornerShape(14.dp)
+                ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    if (repo.isPrivate) Icons.Filled.FolderShared else Icons.Filled.Folder,
+                    contentDescription = if (repo.isPrivate) "Repository privat" else "Repository publik",
+                    tint = if (repo.isPrivate) BlueAccent else GreenPrimary,
+                    modifier = Modifier.size(22.dp)
                 )
-                Spacer(Modifier.size(8.dp))
+            }
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        repo.name,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = BlueAccent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.size(8.dp))
                     Icon(
                         if (repo.isPrivate) Icons.Filled.Lock else Icons.Filled.Public,
                         contentDescription = if (repo.isPrivate) "Private" else "Public",
                         tint = GrayMuted,
                         modifier = Modifier.size(13.dp)
                     )
-                    Spacer(Modifier.size(3.dp))
+                }
+                if (!repo.description.isNullOrBlank()) {
+                    Spacer(Modifier.height(3.dp))
                     Text(
-                        if (repo.isPrivate) "Private" else "Public",
+                        repo.description!!,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(9.dp).background(langColor(repo.language), CircleShape))
+                    Spacer(Modifier.size(5.dp))
+                    Text(repo.language ?: "-", color = GrayMuted, fontSize = 11.sp)
+                    Spacer(Modifier.size(12.dp))
+                    Icon(Icons.Filled.Star, contentDescription = null, tint = GrayMuted, modifier = Modifier.size(13.dp))
+                    Spacer(Modifier.size(3.dp))
+                    Text("${repo.stars}", color = GrayMuted, fontSize = 11.sp)
+                    Spacer(Modifier.size(12.dp))
+                    // Ukuran riil isi repository (termasuk Git LFS) — field "size" API GitHub
+                    // tidak menghitung LFS sehingga bisa jauh lebih kecil dari kenyataan
+                    Text(
+                        when {
+                            usage == null -> "…" // sedang menghitung
+                            usage >= 0L -> formatBytes(usage)
+                            repo.sizeKb > 0 -> formatBytes(repo.sizeKb * 1024) // gagal hitung → fallback API
+                            else -> "0 B"
+                        },
                         color = GrayMuted,
                         fontSize = 11.sp
                     )
+                    Spacer(Modifier.weight(1f))
+                    Text(timeAgo(repo.updatedAt), color = GrayMuted, fontSize = 11.sp)
                 }
-            }
-            if (!repo.description.isNullOrBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    repo.description!!,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(9.dp).background(langColor(repo.language), CircleShape))
-                Spacer(Modifier.size(5.dp))
-                Text(repo.language ?: "-", color = GrayMuted, fontSize = 11.sp)
-                Spacer(Modifier.size(12.dp))
-                Icon(Icons.Filled.Star, contentDescription = null, tint = GrayMuted, modifier = Modifier.size(13.dp))
-                Spacer(Modifier.size(3.dp))
-                Text("${repo.stars}", color = GrayMuted, fontSize = 11.sp)
-                Spacer(Modifier.size(12.dp))
-                // Ukuran riil isi repository (termasuk Git LFS) — field "size" API GitHub
-                // tidak menghitung LFS sehingga bisa jauh lebih kecil dari kenyataan
-                Text(
-                    when {
-                        usage == null -> "…" // sedang menghitung
-                        usage >= 0L -> formatBytes(usage)
-                        repo.sizeKb > 0 -> formatBytes(repo.sizeKb * 1024) // gagal hitung → fallback API
-                        else -> "0 B"
-                    },
-                    color = GrayMuted,
-                    fontSize = 11.sp
-                )
-                Spacer(Modifier.weight(1f))
-                Text(timeAgo(repo.updatedAt), color = GrayMuted, fontSize = 11.sp)
             }
         }
     }

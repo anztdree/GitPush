@@ -499,32 +499,55 @@ object GitHubApi {
     }
 
     /** Stream isi blob MENTAH (Accept: vnd.github.raw) langsung ke OutputStream — hemat RAM, aman file besar. */
-    private suspend fun streamBlobRaw(token: String, owner: String, repo: String, sha: String, out: OutputStream): Unit =
-        withContext(Dispatchers.IO) {
-            val b = Request.Builder().url("$API/repos/$owner/$repo/git/blobs/$sha")
-                .header("Accept", "application/vnd.github.raw")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .header("User-Agent", "GitPush-Android")
-                .header("Authorization", "Bearer $token")
-                .get()
-            http.newCall(b.build()).execute().use { r ->
-                if (!r.isSuccessful) throw GhException("Gagal mengunduh blob (HTTP ${r.code})")
-                r.body?.byteStream()?.use { src -> src.copyTo(out, 256 * 1024) }
-                    ?: throw GhException("Stream blob kosong")
+    private suspend fun streamBlobRaw(
+        token: String, owner: String, repo: String, sha: String, out: OutputStream,
+        onBytes: (Long) -> Unit = {}
+    ): Unit = withContext(Dispatchers.IO) {
+        val b = Request.Builder().url("$API/repos/$owner/$repo/git/blobs/$sha")
+            .header("Accept", "application/vnd.github.raw")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "GitPush-Android")
+            .header("Authorization", "Bearer $token")
+            .get()
+        http.newCall(b.build()).execute().use { r ->
+            if (!r.isSuccessful) throw GhException("Gagal mengunduh blob (HTTP ${r.code})")
+            val src = r.body?.byteStream() ?: throw GhException("Stream blob kosong")
+            src.use { s ->
+                val buf = ByteArray(64 * 1024)
+                var copied = 0L
+                while (true) {
+                    val n = s.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    copied += n
+                    onBytes(copied)
+                }
             }
         }
+    }
 
     /** Unduh konten ASLI objek LFS langsung ke OutputStream (streaming, hemat RAM). */
     suspend fun streamLfsContent(
-        token: String, owner: String, repo: String, oid: String, size: Long, out: OutputStream
+        token: String, owner: String, repo: String, oid: String, size: Long, out: OutputStream,
+        onBytes: (Long) -> Unit = {}
     ): Unit = withContext(Dispatchers.IO) {
         val (href, extraHeaders) = lfsDownloadAction(token, owner, repo, oid, size)
         val b = Request.Builder().url(href).header("User-Agent", "GitPush-Android")
         extraHeaders.forEach { (k, v) -> b.header(k, v) }
         http.newCall(b.build()).execute().use { r ->
             if (!r.isSuccessful) throw GhException("Gagal mengunduh objek LFS (HTTP ${r.code})")
-            r.body?.byteStream()?.use { src -> src.copyTo(out, 256 * 1024) }
-                ?: throw GhException("Stream LFS kosong")
+            val src = r.body?.byteStream() ?: throw GhException("Stream LFS kosong")
+            src.use { s ->
+                val buf = ByteArray(64 * 1024)
+                var copied = 0L
+                while (true) {
+                    val n = s.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    copied += n
+                    onBytes(copied)
+                }
+            }
         }
     }
 
@@ -961,13 +984,16 @@ object GitHubApi {
     // ============ RENAME (1 COMMIT VIA GIT DATA API) ============
 
     suspend fun renameFile(
-        token: String, owner: String, repo: String, branch: String, oldPath: String, newPath: String
+        token: String, owner: String, repo: String, branch: String, oldPath: String, newPath: String,
+        onStage: (String) -> Unit = {}
     ): String = withContext(Dispatchers.IO) {
+        onStage("Menganalisis tree…")
         val commitSha = refSha(token, owner, repo, branch)
         val oldTreeSha = commitTreeSha(token, owner, repo, commitSha)
         val tree = fetchTreeRecursive(token, owner, repo, oldTreeSha)
         val target = tree.firstOrNull { it.path == oldPath && it.type == "blob" }
             ?: throw GhException("File tidak ditemukan di tree")
+        onStage("Menyiapkan commit…")
         val arr = JSONArray()
         arr.put(
             JSONObject().put("path", newPath).put("mode", "100644").put("type", "blob").put("sha", target.sha)
@@ -995,23 +1021,27 @@ object GitHubApi {
 
     /** Rename folder (pindah seluruh isinya) dalam 1 commit. Return: commitSha to jumlah file. */
     suspend fun renameFolder(
-        token: String, owner: String, repo: String, branch: String, oldPath: String, newPath: String
-    ): Pair<String, Int> = moveOrDeleteFolder(token, owner, repo, branch, oldPath, newPath)
+        token: String, owner: String, repo: String, branch: String, oldPath: String, newPath: String,
+        onStage: (String) -> Unit = {}
+    ): Pair<String, Int> = moveOrDeleteFolder(token, owner, repo, branch, oldPath, newPath, onStage)
 
     /** Hapus folder beserta seluruh isinya dalam 1 commit. Return: commitSha to jumlah file terhapus. */
     suspend fun deleteFolder(
-        token: String, owner: String, repo: String, branch: String, path: String
-    ): Pair<String, Int> = moveOrDeleteFolder(token, owner, repo, branch, path, null)
+        token: String, owner: String, repo: String, branch: String, path: String,
+        onStage: (String) -> Unit = {}
+    ): Pair<String, Int> = moveOrDeleteFolder(token, owner, repo, branch, path, null, onStage)
 
     private suspend fun moveOrDeleteFolder(
         token: String, owner: String, repo: String, branch: String,
-        folderPath: String, newFolderPath: String?
+        folderPath: String, newFolderPath: String?, onStage: (String) -> Unit = {}
     ): Pair<String, Int> = withContext(Dispatchers.IO) {
         val prefix = "$folderPath/"
         var lastErr: Exception? = null
         // Diulang maks 3x bila branch bergerak saat update ref (non fast-forward)
         repeat(3) { attempt ->
             try {
+                if (attempt > 0) onStage("Branch bergerak — mengulang (${attempt + 1}/3)…")
+                else onStage("Menganalisis tree…")
                 val commitSha = refSha(token, owner, repo, branch)
                 val oldTreeSha = commitTreeSha(token, owner, repo, commitSha)
                 val tree = fetchTreeRecursive(token, owner, repo, oldTreeSha)
@@ -1019,6 +1049,7 @@ object GitHubApi {
                 if (inside.isEmpty()) {
                     throw GhException("Folder \"$folderPath\" kosong atau tidak ditemukan", 404)
                 }
+                onStage("Menyiapkan ${inside.size} file…")
                 val arr = JSONArray()
                 for (e in inside) {
                     arr.put(
@@ -1122,8 +1153,10 @@ object GitHubApi {
      * dari penyimpanan LFS ke Download (bukan pointer ±130 B).
      */
     suspend fun downloadFile(
-        context: Context, token: String, owner: String, repo: String, node: GhNode, ref: String
+        context: Context, token: String, owner: String, repo: String, node: GhNode, ref: String,
+        onStage: (String) -> Unit = {}, onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): String = withContext(Dispatchers.IO) {
+        onStage("Membaca metadata…")
         val meta = fetchFileMeta(token, owner, repo, node.path, ref)
 
         // Deteksi pointer LFS: (1) sudah terdeteksi fetchFileMeta (isLfs, pointer ±130 B selalu
@@ -1141,19 +1174,34 @@ object GitHubApi {
         } else null
 
         when {
-            // Konten ASLI dari penyimpanan Git LFS
-            ptr != null -> saveToDownloads(context, node.name, "application/octet-stream") { out ->
-                streamLfsContent(token, owner, repo, ptr.first, ptr.second, out)
+            // Konten ASLI dari penyimpanan Git LFS — progres byte nyata
+            ptr != null -> {
+                val total = ptr.second
+                onStage("Menyiapkan objek Git LFS…")
+                saveToDownloads(context, node.name, "application/octet-stream") { out ->
+                    onProgress(0, total)
+                    streamLfsContent(token, owner, repo, ptr.first, total, out) { sent ->
+                        onProgress(sent, total)
+                    }
+                }
             }
             // File ≥ 1 MB: Contents API TIDAK mengirim isi (content="") — stream mentah dari
             // Git Blobs API langsung ke Download tanpa memuat seluruh file ke RAM.
-            meta.contentB64.isNullOrEmpty() -> saveToDownloads(context, node.name, "application/octet-stream") { out ->
-                streamBlobRaw(token, owner, repo, meta.sha, out)
+            meta.contentB64.isNullOrEmpty() -> {
+                val total = if (meta.size > 0) meta.size else 0L
+                saveToDownloads(context, node.name, "application/octet-stream") { out ->
+                    if (total > 0) onProgress(0, total)
+                    streamBlobRaw(token, owner, repo, meta.sha, out) { sent ->
+                        if (total > 0) onProgress(sent, total)
+                    }
+                }
             }
             // File kecil biasa — isi sudah utuh di meta
             else -> {
                 val bytes = Base64.decode(meta.contentB64, Base64.DEFAULT)
-                saveToDownloads(context, node.name, "application/octet-stream") { it.write(bytes) }
+                val loc = saveToDownloads(context, node.name, "application/octet-stream") { it.write(bytes) }
+                onProgress(bytes.size.toLong(), bytes.size.toLong())
+                loc
             }
         }
     }
@@ -1178,7 +1226,7 @@ object GitHubApi {
      */
     private suspend fun zipBlobs(
         context: Context, zipName: String, token: String, owner: String, repo: String,
-        blobs: List<TreeNode>, onProgress: (Int, Int) -> Unit
+        blobs: List<TreeNode>, onProgress: (Int, Int, String) -> Unit
     ): Unit = withContext(Dispatchers.IO) {
         if (blobs.size > 1500) throw GhException("Terlalu banyak file (${blobs.size}). Maksimal 1500 file per unduhan ZIP.")
         val ptrs = resolveLfsPointers(token, owner, repo, blobs.map { it.sha to it.size })
@@ -1194,7 +1242,7 @@ object GitHubApi {
                     if (p != null) streamLfsContent(token, owner, repo, p.first, p.second, zip)
                     else streamBlobRaw(token, owner, repo, n.sha, zip)
                     zip.closeEntry()
-                    onProgress(i + 1, blobs.size)
+                    onProgress(i + 1, blobs.size, n.path)
                 }
             }
         }
@@ -1202,7 +1250,7 @@ object GitHubApi {
 
     suspend fun downloadFolderZip(
         context: Context, token: String, owner: String, repo: String, branch: String,
-        folderPath: String, onProgress: (Int, Int) -> Unit
+        folderPath: String, onProgress: (Int, Int, String) -> Unit
     ): String = withContext(Dispatchers.IO) {
         val blobs = collectBlobs(token, owner, repo, branch, folderPath)
         val zipName = "${(folderPath.ifEmpty { repo }).replace('/', '-')}-$branch.zip"
@@ -1212,7 +1260,7 @@ object GitHubApi {
 
     suspend fun downloadRepoZip(
         context: Context, token: String, owner: String, repo: String, branch: String,
-        isPrivate: Boolean, onProgress: (Int, Int) -> Unit
+        isPrivate: Boolean, onProgress: (Int, Int, String) -> Unit
     ): String = withContext(Dispatchers.IO) {
         // Selalu rakit ZIP sendiri: zipball bawaan GitHub memuat pointer LFS (±130 B),
         // bukan isi aslinya. Jalur ini men-resolve objek LFS sehingga ZIP berisi file utuh.

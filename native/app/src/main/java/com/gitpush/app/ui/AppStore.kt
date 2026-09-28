@@ -1,7 +1,9 @@
 package com.gitpush.app.ui
 
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.gitpush.app.data.GhRepo
 import com.gitpush.app.data.GhUser
 import com.gitpush.app.data.HistoryEntry
@@ -36,6 +38,21 @@ sealed class Screen {
     ) : Screen()
 }
 
+/**
+ * Satu proses global yang tampil sebagai dialog progres (unduh file, ZIP, pindah,
+ * rename besar, dll). total == 0 → spinner tanpa persen; total > 0 → bar + persen.
+ */
+class OperationState {
+    var running by mutableStateOf(false)
+    var title by mutableStateOf("")
+    var detail by mutableStateOf("")
+    var done by mutableStateOf(0L)
+    var total by mutableStateOf(0L)
+
+    /** "bytes" → tampil formatBytes(done/total); lainnya → "d / t" */
+    var unit by mutableStateOf("bytes")
+}
+
 object Store {
     val token = mutableStateOf("")
     val user = mutableStateOf<GhUser?>(null)
@@ -46,6 +63,9 @@ object Store {
     val history = mutableStateOf(listOf<HistoryEntry>())
     val unread = mutableStateOf(0)
     val repos = mutableStateOf<List<GhRepo>>(emptyList())
+
+    /** Dialog progres untuk SEMUA proses panjang (unduh, ZIP, pindah, hapus besar, dst). */
+    val operation = OperationState()
 
     /**
      * Posisi folder terakhir per repo+branch, kunci "fullName@branch" → path.
@@ -69,6 +89,39 @@ object Store {
 
     fun pop() {
         if (stack.isNotEmpty()) stack.removeAt(stack.size - 1)
+    }
+
+    // ---- Dialog progres global ----
+
+    fun showOp(title: String, detail: String = "", unit: String = "bytes") {
+        operation.title = title
+        operation.detail = detail
+        operation.unit = unit
+        operation.done = 0L
+        operation.total = 0L
+        operation.running = true
+    }
+
+    fun opDetail(d: String) {
+        if (operation.running) operation.detail = d
+    }
+
+    fun opProgress(done: Long, total: Long) {
+        if (operation.running && total > 0) {
+            operation.done = done
+            operation.total = total
+        }
+    }
+
+    fun opStep(done: Long, total: Long, detail: String? = null) {
+        if (!operation.running) return
+        operation.done = done
+        operation.total = total
+        if (detail != null) operation.detail = detail
+    }
+
+    fun hideOp() {
+        operation.running = false
     }
 
     fun gotoTab(t: String) {

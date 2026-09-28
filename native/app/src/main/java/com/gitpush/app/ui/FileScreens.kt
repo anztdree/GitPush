@@ -135,15 +135,22 @@ fun ViewerScreen(s: Screen.Viewer) {
             }
             IconButton(onClick = {
                 scope.launch {
+                    Store.showOp("Mengunduh file", fileName)
                     try {
                         val node = com.gitpush.app.data.GhNode(fileName, s.path, "file", s.size, s.sha)
                         val loc = withContext(Dispatchers.IO) {
-                            GitHubApi.downloadFile(ctx, Store.token.value, s.owner, s.name, node, s.branch)
+                            GitHubApi.downloadFile(
+                                ctx, Store.token.value, s.owner, s.name, node, s.branch,
+                                onStage = { Store.opDetail(it) },
+                                onProgress = { sent, total -> Store.opProgress(sent, total) }
+                            )
                         }
                         Store.log("download", "Download $fileName", "${s.owner}/${s.name}")
                         toast("Tersimpan: $loc")
                     } catch (e: Exception) {
                         toast("Gagal: ${GitHubApi.humanError(e)}")
+                    } finally {
+                        Store.hideOp()
                     }
                 }
             }) {
@@ -176,15 +183,22 @@ fun ViewerScreen(s: Screen.Viewer) {
                         size = lfsInfo!!.second,
                         onDownload = {
                             scope.launch {
+                                Store.showOp("Mengunduh file (Git LFS)", fileName)
                                 try {
                                     val node = com.gitpush.app.data.GhNode(fileName, s.path, "file", lfsInfo?.second ?: s.size, s.sha)
                                     val loc = withContext(Dispatchers.IO) {
-                                        GitHubApi.downloadFile(ctx, Store.token.value, s.owner, s.name, node, s.branch)
+                                        GitHubApi.downloadFile(
+                                            ctx, Store.token.value, s.owner, s.name, node, s.branch,
+                                            onStage = { Store.opDetail(it) },
+                                            onProgress = { sent, total -> Store.opProgress(sent, total) }
+                                        )
                                     }
                                     Store.log("download", "Download $fileName", "${s.owner}/${s.name}")
                                     toast("Tersimpan: $loc")
                                 } catch (e: Exception) {
                                     toast("Gagal: ${GitHubApi.humanError(e)}")
+                                } finally {
+                                    Store.hideOp()
                                 }
                             }
                         }

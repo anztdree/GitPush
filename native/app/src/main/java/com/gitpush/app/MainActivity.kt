@@ -55,6 +55,7 @@ import com.gitpush.app.ui.GreenPrimary
 import com.gitpush.app.ui.GrayMuted
 import com.gitpush.app.ui.HomeScreen
 import com.gitpush.app.ui.NotificationsScreen
+import com.gitpush.app.ui.OperationOverlay
 import com.gitpush.app.ui.ProfileScreen
 import com.gitpush.app.ui.RepoScreen
 import com.gitpush.app.ui.Screen
@@ -174,6 +175,9 @@ fun MainScaffold() {
                     else -> ProfileScreen()
                 }
             }
+            // Dialog progres GLOBAL — semua proses panjang (unduh, ZIP, pindah, hapus, dll)
+            // tampil di sini, di atas layar mana pun.
+            OperationOverlay()
         }
     }
 }

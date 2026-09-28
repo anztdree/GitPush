@@ -17,9 +17,26 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderZip
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Inbox
+import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Slideshow
+import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.ui.window.Dialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -304,20 +321,167 @@ fun QuotaBar(
     }
 }
 
+// ---------- Ikon tipe file (warna per kategori — identitas file manager) ----------
+
+/** Palet warna ikon kategori file (terinspirasi GitHub octicon, kontras di dark & light). */
+object FilePalette {
+    val Folder = Color(0xFFF0B232)   // kuning emas — folder
+    val Code = Color(0xFF3FB950)     // hijau — kode
+    val Doc = Color(0xFF58A6FF)      // biru muda — dokumen teks
+    val Image = Color(0xFFA371F7)    // ungu — gambar
+    val Video = Color(0xFFFF7B72)    // merah muda — video
+    val Audio = Color(0xFFFFA657)    // oranye — audio
+    val Archive = Color(0xFFE3B341)  // amber — arsip
+    val Pdf = Color(0xFFF85149)      // merah — PDF
+    val Sheet = Color(0xFF2DD4BF)    // teal — spreadsheet/data
+    val Generic = Color(0xFF9198A1)  // abu — lainnya
+}
+
+private val extOf: (String) -> String = { n -> n.substringAfterLast('.', "").lowercase() }
+
+/** Jenis ikon + warna untuk nama file (atau folder). */
+fun fileInfo(name: String, isDir: Boolean): Pair<ImageVector, Color> {
+    if (isDir) return Icons.Filled.Folder to FilePalette.Folder
+    val ext = extOf(name)
+    return when (ext) {
+        in setOf("kt", "kts", "java", "py", "js", "ts", "tsx", "jsx", "c", "cpp", "h", "cs", "go", "rs", "rb", "php", "swift", "sh", "bat", "gradle", "cmake", "lua", "r", "scala", "dart", "sql", "asm", "s") ->
+            Icons.Filled.Code to FilePalette.Code
+        in setOf("html", "css", "scss", "vue", "xml", "ui") ->
+            Icons.Filled.Code to FilePalette.Code
+        in setOf("json", "yml", "yaml", "toml", "ini", "conf", "properties", "env", "lock") ->
+            Icons.Filled.Tune to FilePalette.Code
+        in setOf("md", "txt", "rtf", "log", "doc", "docx", "odt") ->
+            if (ext == "md") Icons.Filled.Article to FilePalette.Doc else Icons.Filled.Description to FilePalette.Doc
+        in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "heic", "tiff") ->
+            Icons.Filled.Image to FilePalette.Image
+        in setOf("mp4", "mkv", "mov", "avi", "webm", "3gp", "m4v") ->
+            Icons.Filled.Movie to FilePalette.Video
+        in setOf("mp3", "wav", "ogg", "m4a", "flac", "aac", "opus") ->
+            Icons.Filled.MusicNote to FilePalette.Audio
+        in setOf("zip", "rar", "7z", "tar", "gz", "bz2", "xz", "apk", "jar", "aab") ->
+            Icons.Filled.FolderZip to FilePalette.Archive
+        "pdf" -> Icons.Filled.PictureAsPdf to FilePalette.Pdf
+        in setOf("csv", "xlsx", "xls", "ods", "tsv") ->
+            Icons.Filled.TableChart to FilePalette.Sheet
+        in setOf("ppt", "pptx", "odp") ->
+            Icons.Filled.Slideshow to FilePalette.Video
+        in setOf("ttf", "otf", "woff", "woff2") ->
+            Icons.Filled.TextFields to FilePalette.Doc
+        in setOf("exe", "dll", "so", "bin", "deb", "rpm", "dmg", "iso") ->
+            Icons.Filled.Memory to FilePalette.Generic
+        else -> Icons.Filled.InsertDriveFile to FilePalette.Generic
+    }
+}
+
+/**
+ * Ikon tipe file dalam kotak bulat berwarna (alpha 15%) — tampilan premium ala
+ * file manager modern. Dipakai di RepoScreen dan dialog lain.
+ */
+@Composable
+fun FileTypeBadge(name: String, isDir: Boolean, size: Dp = 38.dp, iconSize: Dp = 20.dp) {
+    val (icon, color) = fileInfo(name, isDir)
+    Box(
+        Modifier.size(size).background(color.copy(alpha = 0.15f), RoundedCornerShape(size / 3)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(iconSize))
+    }
+}
+
+// ---------- Dialog progres global (semua proses panjang) ----------
+
+@Composable
+fun OperationOverlay() {
+    if (!Store.operation.running) return
+    Dialog(onDismissRequest = { }) {
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.widthIn(max = 340.dp)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(40.dp).background(GreenPrimary.copy(alpha = 0.14f), RoundedCornerShape(13.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.CloudSync,
+                            contentDescription = null,
+                            tint = GreenPrimary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(Modifier.size(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(Store.operation.title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        if (Store.operation.detail.isNotEmpty()) {
+                            Text(
+                                Store.operation.detail,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                val t = Store.operation.total
+                val d = Store.operation.done
+                if (t > 0) {
+                    LinearProgressIndicator(
+                        progress = { (d.toFloat() / t).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = GreenPrimary,
+                        trackColor = GreenPrimary.copy(alpha = 0.15f)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    val pct = ((d * 100) / t).toInt()
+                    val amount = if (Store.operation.unit == "bytes")
+                        "${formatBytes(d)} / ${formatBytes(t)}" else "$d / $t"
+                    Text(
+                        "$amount • $pct%",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = GreenPrimary,
+                        trackColor = GreenPrimary.copy(alpha = 0.15f)
+                    )
+                }
+            }
+        }
+    }
+}
+
 // ---------- Markdown minimal ----------
 
+/** Markdown inline: **tebal**, *miring*, `kode`, [teks](url) — dipakai MarkdownText. */
 fun inlineStyled(s: String): AnnotatedString = buildAnnotatedString {
-    val re = Regex("(\\*\\*[^*]+\\*\\*|`[^`]+`)")
+    val re = Regex("(\\*\\*[^*]+\\*\\*|\\*[^*\\s][^*]*\\*|`[^`]+`|\\[[^\\]]+\\]\\([^)\\s]+\\))")
     var last = 0
     for (m in re.findAll(s)) {
         append(s.substring(last, m.range.first))
-        if (s[m.range.first] == '*') {
-            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                append(s.substring(m.range.first + 2, m.range.last - 1))
+        val tok = m.value
+        when {
+            tok.startsWith("**") -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                append(tok.substring(2, tok.length - 2))
             }
-        } else {
-            withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 12.5.sp)) {
-                append(s.substring(m.range.first + 1, m.range.last))
+            tok.startsWith("*") -> withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) {
+                append(tok.substring(1, tok.length - 1))
+            }
+            tok.startsWith("`") -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 12.5.sp)) {
+                append(tok.substring(1, tok.length - 1))
+            }
+            else -> {
+                // link [teks](url) — tampil berwarna; url dibuka via klik di MarkdownText link handler
+                val label = tok.substringAfter('[').substringBefore(']')
+                withStyle(SpanStyle(color = BlueAccent, fontWeight = FontWeight.SemiBold)) {
+                    append(label)
+                }
             }
         }
         last = m.range.last + 1
