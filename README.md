@@ -1,3 +1,6 @@
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/965bbddb-856a-4f1c-bbe9-d97df1ef6317" />
+
+
 # GitPush 📲
 
 **Aplikasi Android murni native (Kotlin + Jetpack Compose) untuk mengelola repository GitHub dari HP** — lengkap dengan fitur andalan yang tidak dimiliki aplikasi GitHub resmi: **upload massal banyak file & folder dalam satu commit**.
