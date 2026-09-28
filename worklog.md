@@ -174,3 +174,23 @@ Stage Summary:
 - Satu-satunya versi yang ada sekarang: GitPush v1.0 = aplikasi Android murni native (Kotlin + Jetpack Compose, 2,9 MB) dengan semua fitur: bulk upload 1 commit, buat repository, edit/rename/hapus/buat file, download file/folder/repo, notifikasi, Pengaturan berisi, layout responsif.
 - Repo backup: github.com/anztdree/GitPush — main = history bersih (commit kode + commit worklog), Release v1.0 + GitPush-v1.0.apk.
 - Catatan: versionCode internal tetap 2 (instalasi di atas APK lama langsung berhasil); versionName yang terlihat user = 1.0.
+
+---
+Task ID: 9
+Agent: Z.ai Code (main)
+Task: Perbaiki bug "direktori/file di HP tidak terbaca sempurna" pada pemilihan file upload (feedback user v1.0)
+
+Work Log:
+- Akar masalah ditemukan di UploadScreen.kt: (1) PickedFile menampung seluruh byte file di RAM begitu dipilih — folder besar = OOM/crash; (2) traversal folder memakai DocumentFile.listFiles() yang lambat (1 query per file) dan file yang gagal dibaca DIHILANGKAN diam-diam (getOrNull/mapNotNull tanpa laporan); (3) tidak ada akses filesystem penuh — hanya picker sistem SAF yang tampilannya terbatas di banyak HP.
+- Fitur baru FileBrowser.kt: File Manager bawaan full-screen — navigasi folder asli via java.io.File, semua file tampil (termasuk dotfile), ukuran file, pintasan Internal/Download/Documents/DCIM/SD card (deteksi volume via /storage), pilih file per-checklist atau "Pilih Folder Ini" (scan rekursif BFS cap 2000 file dengan laporan skipped), izin akses semua file (MANAGE_EXTERNAL_STORAGE via Settings di API 30+, WRITE_EXTERNAL_STORAGE runtime di API 29 dengan requestLegacyExternalStorage), re-check izin saat ON_RESUME.
+- UploadScreen.kt ditulis ulang: scanner SAF via DocumentsContract.buildChildDocumentsUriUsingTree (1 query per folder, lengkap + cepat) menggantikan DocumentFile; byte file TIDAK lagi dibaca saat memilih — PickedFile kini membawa sumber (file/uri/bytes) dan byte dibaca per-file SAAT upload (concurrency 3, hemat RAM); persistable URI grant diambil saat pick; laporan eksplisit "n file tidak dapat dibaca (dilewati)"; dedupe path (pilih ulang = timpa); banner izin + tombol Beri Izin.
+- GitHubApi.bulkUpload: parameter baru resolver: ContentResolver?; pembacaan sumber di dalam worker blob (file.readBytes() / resolver.openInputStream) dengan error jelas "Gagal membaca: path".
+- Models.kt: PickedFile = (path, size, bytes?, file?, uri?).
+- Manifest: MANAGE_EXTERNAL_STORAGE + WRITE_EXTERNAL_STORAGE maxSdk 32 + requestLegacyExternalStorage; versionCode 2 → 3 (versionName tetap 1.0).
+- Build: assembleRelease BUILD SUCCESSFUL 3m51s; aapt: versionCode 3, versionName 1.0, izin storage tampil; APK 2.981.445 bytes → public/gitpush.apk.
+- Push main (f5b5741); aset release v1.0 diganti (DELETE 204 + upload state uploaded, size cocok); body release di-update (Fitur + Perbaikan versionCode 3); verifikasi unduh 200 content-length cocok.
+
+Stage Summary:
+- Pemilihan file upload kini 3 jalur: File Manager bawaan (utama, semua folder/file terbaca sempurna), Pilih File SAF, Pilih Folder SAF (diperbaiki).
+- Tanpa OOM di folder besar (byte dibaca saat upload, 3 file di RAM), tanpa file hilang diam-diam (semua kegagalan dilaporkan).
+- Artefak: FileBrowser.kt baru, UploadScreen/GitHubApi/Models/Manifest/build.gradle diperbarui; APK v1.0 (versionCode 3) di public/gitpush.apk + aset release.
