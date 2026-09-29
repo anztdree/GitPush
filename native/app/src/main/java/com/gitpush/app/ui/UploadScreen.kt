@@ -816,7 +816,11 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                     val hf = UploadManager.hashFile
                     if (hf.isNotEmpty()) {
                         Text(
-                            "Menganalisis ${UploadManager.filesTotal} file — ${hf.substringAfterLast('/')}",
+                            buildString {
+                                append("Menganalisis ${UploadManager.filesTotal} file")
+                                if (UploadManager.filesAnalyzed > 0) append(" — ${UploadManager.filesAnalyzed}/${UploadManager.filesTotal} siap")
+                                append(" • ${hf.substringAfterLast('/')}")
+                            },
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -846,7 +850,10 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                         }
                     } else {
                         Text(
-                            "Menganalisis ${UploadManager.filesTotal} file…",
+                            buildString {
+                                append("Menganalisis ${UploadManager.filesTotal} file…")
+                                if (UploadManager.filesAnalyzed > 0) append(" ${UploadManager.filesAnalyzed}/${UploadManager.filesTotal} siap")
+                            },
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

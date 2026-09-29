@@ -55,6 +55,7 @@ object UploadManager {
     var hashFile by mutableStateOf(""); private set
     var hashSent by mutableStateOf(0L); private set
     var hashTotal by mutableStateOf(0L); private set
+    var filesAnalyzed by mutableStateOf(0); private set
 
     /** Info retry otomatis yang sedang berlangsung, mis. "video.mp4 (2/5)". */
     var retryMsg by mutableStateOf<String?>(null); private set
@@ -102,6 +103,7 @@ object UploadManager {
         hashFile = ""
         hashSent = 0L
         hashTotal = 0L
+        filesAnalyzed = 0
         retryMsg = null
         currentFile = ""
         currentSent = 0L
@@ -162,6 +164,7 @@ object UploadManager {
                         hashSent = read
                         hashTotal = total
                     },
+                    onAnalyzed = { done, _ -> filesAnalyzed = done },
                     onCurrent = { p, sent, total ->
                         currentFile = p
                         currentSent = sent

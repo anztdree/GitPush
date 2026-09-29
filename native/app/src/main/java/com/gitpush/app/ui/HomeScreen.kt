@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderShared
@@ -63,8 +64,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gitpush.app.data.GhException
@@ -601,6 +604,7 @@ private fun CreateRepoDialog(onDismiss: () -> Unit, onCreated: () -> Unit) {
 @Composable
 fun DeleteRepoDialog(owner: String, name: String, onDismiss: () -> Unit, onDeleted: () -> Unit) {
     val ctx = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var confirm by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -626,6 +630,24 @@ fun DeleteRepoDialog(owner: String, name: String, onDismiss: () -> Unit, onDelet
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth()
                 )
+                // Salin nama sekali klik — tidak perlu mengetik manual / buka browser
+                TextButton(
+                    onClick = {
+                        clipboard.setText(AnnotatedString(name))
+                        Toast.makeText(ctx, "\"$name\" tersalin — tempel di kolom atas", Toast.LENGTH_SHORT).show()
+                    },
+                    enabled = !busy,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Icon(
+                        Icons.Filled.ContentCopy,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Salin nama \"$name\"", fontSize = 12.sp)
+                }
                 if (error != null) {
                     Spacer(Modifier.height(8.dp))
                     Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)

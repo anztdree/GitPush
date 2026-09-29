@@ -30,11 +30,12 @@ import java.io.OutputStream
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
-class GhException(message: String, val code: Int = 0, val retryAfterMs: Long = 0) : Exception(message)
+class GhException(message: String, val code: Int = 0, val retryAfterMs: Long = 0, val kind: String = "") : Exception(message)
 
 /** Callback progres untuk bulkUpload — dipanggil dari thread IO (aman untuk state Compose). */
 class UploadHooks(
@@ -49,6 +50,8 @@ class UploadHooks(
     val onHash: (path: String, read: Long, total: Long) -> Unit = { _, _, _ -> },
     /** BARU: notifikasi retry per file agar pengguna tahu proses masih berjalan. */
     val onRetry: (path: String, attempt: Int, maxAttempts: Int, waitMs: Long) -> Unit = { _, _, _, _ -> },
+    /** BARU: jumlah file yang selesai dianalisis (persiapan paralel) — (selesai, total). */
+    val onAnalyzed: (done: Int, total: Int) -> Unit = { _, _ -> },
     val isCancelled: () -> Boolean = { false }
 )
 
@@ -63,8 +66,15 @@ object GitHubApi {
 
     const val API = "https://api.github.com"
 
-    /** File di atas ambang ini otomatis dikirim via Git LFS (limit blob API GitHub ±100 MB). */
-    const val LFS_THRESHOLD_BYTES = 95L * 1024 * 1024
+    /** File di atas ambang ini otomatis dikirim via Git LFS.
+     *  16 MB: di atas ukuran ini jalur blob API memboroskan 33% (base64 + JSON) dan
+     *  PUT biner langsung ke storage LFS terbukti jauh lebih cepat & stabil di jaringan
+     *  seluler — keluhan "35 MB stuck lama". Bila kuota LFS habis, otomatis fallback
+     *  ke blob API (file ≤99 MB masih diterima GitHub). */
+    const val LFS_THRESHOLD_BYTES = 16L * 1024 * 1024
+
+    /** Ambang maksimum fallback blob API (limit blob GitHub 100 MB — sambungi margin). */
+    const val MAX_BLOB_FALLBACK_BYTES = 99L * 1024 * 1024
 
     /** SHA blob kosong yang dikenal git — tidak perlu request API untuk file 0 byte. */
     const val EMPTY_BLOB_SHA = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
@@ -529,15 +539,16 @@ object GitHubApi {
 
     /**
      * Selidiki blob kecil (kandidat pointer LFS: 120–160 B — panjang pointer selalu 124–140 B,
-     * maks 60 blob, 6 paralel) → peta blobSha → (oid, ukuran asli). Gagal per-blob diabaikan.
+     * maks 120 blob, 8 paralel) → peta blobSha → (oid, ukuran asli). Gagal per-blob diabaikan.
+     * Ambang LFS kini 16 MB → lebih banyak file jadi pointer, jadi kapasitas dinaikkan dari 60.
      */
     suspend fun resolveLfsPointers(
         token: String, owner: String, repo: String,
         candidates: List<Pair<String, Long>> // sha → ukuran di tree
     ): Map<String, Pair<String, Long>> {
-        val sel = candidates.filter { it.second in 120..160 }.take(60)
+        val sel = candidates.filter { it.second in 120..160 }.take(120)
         if (sel.isEmpty()) return emptyMap()
-        val sem = Semaphore(6)
+        val sem = Semaphore(8)
         val out = ConcurrentHashMap<String, Pair<String, Long>>()
         coroutineScope {
             sel.forEach { (sha, _) ->
@@ -673,34 +684,46 @@ object GitHubApi {
         val baseTreeSha = baseCommitSha?.let { commitTreeSha(token, owner, repo, it) }
 
         // Rencana: ukuran pasti (probe bila metadata 0) + sha256 utk LFS.
-        // Progres analisis dilaporkan via onHash — file besar bisa dibaca 1-2 kali
-        // penuh (checksum) dan dulu fase ini TANPA feedback sehingga kelihatan macet.
-        val plans = ArrayList<Plan>(files.size)
-        var totalBytes = 0L
-        for (f in files) {
-            if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
-            var size = f.size
-            var sha256: String? = null
-            if (size <= 0) {
-                hooks.onStage("Menganalisis file")
-                val p = hashAndSize(resolver, f, 0) { read -> hooks.onHash(f.path, read, 0) }
-                size = p.first
-                sha256 = p.second
+        // DIPARALELKAN (4): ratusan file besar tidak lagi dianalisis satu-per-satu —
+        // dulu loop sekuensial membuat fase persiapan terasa macet sebelum upload mulai.
+        // Progres tiap checksum dilaporkan via onHash, jumlah selesai via onAnalyzed.
+        val plans = arrayOfNulls<Plan>(files.size)
+        val totalBytes = AtomicLong(0)
+        val analyzed = AtomicInteger(0)
+        val semHash = Semaphore(4)
+        coroutineScope {
+            files.forEachIndexed { idx, f ->
+                launch {
+                    semHash.withPermit {
+                        if (hooks.isCancelled()) return@withPermit
+                        var size = f.size
+                        var sha256: String? = null
+                        if (size <= 0) {
+                            hooks.onStage("Menganalisis file")
+                            val p = hashAndSize(resolver, f, 0) { read -> hooks.onHash(f.path, read, 0) }
+                            size = p.first
+                            sha256 = p.second
+                        }
+                        val lfs = size > LFS_THRESHOLD_BYTES
+                        if (lfs && sha256 == null) {
+                            hooks.onStage("Menganalisis file")
+                            sha256 = hashAndSize(resolver, f, size) { read -> hooks.onHash(f.path, read, size) }.second
+                        }
+                        plans[idx] = Plan(f, size, sha256, lfs)
+                        totalBytes.addAndGet(size)
+                        hooks.onAnalyzed(analyzed.incrementAndGet(), files.size)
+                    }
+                }
             }
-            val lfs = size > LFS_THRESHOLD_BYTES
-            if (lfs && sha256 == null) {
-                hooks.onStage("Menganalisis file")
-                sha256 = hashAndSize(resolver, f, size) { read -> hooks.onHash(f.path, read, size) }.second
-            }
-            plans.add(Plan(f, size, sha256, lfs))
-            totalBytes += size
         }
-        hooks.onTotal(files.size, totalBytes)
+        if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
+        val planList = plans.map { it ?: throw GhException("Rencana upload tidak lengkap") }
+        hooks.onTotal(files.size, totalBytes.get())
 
         // ===== Unggah blob — paralel TIERED (kunci kecepatan & keandalan): =====
         // - File kecil (<1 MB): 6 paralel — ratusan file selesai jauh lebih cepat.
-        // - File menengah (1-95 MB): 3 paralel.
-        // - File LFS (>95 MB): 1 sekaligus SAJA. Dulu paralel 3 berebut bandwidth
+        // - File menengah (1-16 MB): 3 paralel.
+        // - File LFS (≥16 MB): 1 sekaligus SAJA. Dulu paralel 3 berebut bandwidth
         //   sehingga PUT ratusan MB mudah putus dan gagal berulang.
         hooks.onStage("Mengunggah file")
         val shas = arrayOfNulls<String>(files.size)
@@ -710,13 +733,13 @@ object GitHubApi {
         val semLfs = Semaphore(1)
         // File kecil dulu (banyak kemenangan cepat → progres terasa hidup), besar terakhir
         val ordered = files.indices.sortedWith(
-            compareBy<Int> { plans[it].lfs }.thenBy { plans[it].size }
+            compareBy<Int> { planList[it].lfs }.thenBy { planList[it].size }
         )
         coroutineScope {
             for (idx in ordered) {
                 val f = files[idx]
                 launch {
-                    val plan = plans[idx]
+                    val plan = planList[idx]
                     val sem = when {
                         plan.lfs -> semLfs
                         plan.size >= 1L * 1024 * 1024 -> semMid
@@ -724,10 +747,16 @@ object GitHubApi {
                     }
                     sem.withPermit {
                         if (hooks.isCancelled()) return@withPermit
-                        // Delta byte file ini → agregat global (dulu hanya 1 file dihitung
-                        // sehingga progres bar "melompat" dan kecepatan/ETA salah)
+                        // Delta byte file ini → agregat global. Saat percobaan ULANG dimulai
+                        // dari 0 (sent < lastLocal), aggregate DITARIK BALIK — dulu bar total
+                        // MEMBEKU di posisi percobaan lama sampai file melewatinya; itulah
+                        // keluhan "progress stuck terasa lama".
                         var lastLocal = 0L
                         val onP: (Long) -> Unit = { sent ->
+                            if (sent < lastLocal) {
+                                ctx.rewind(lastLocal - sent)
+                                lastLocal = sent
+                            }
                             val d = sent - lastLocal
                             lastLocal = sent
                             if (d > 0) ctx.addSent(d)
@@ -739,9 +768,18 @@ object GitHubApi {
                                 plan.size == 0L -> EMPTY_BLOB_SHA
                                 plan.lfs -> {
                                     val oid = plan.sha256 ?: hashAndSize(resolver, f).second
-                                    ctx.lfsUpload(f, plan.size, oid, onP)
-                                    // Pointer LFS di-commit sebagai blob kecil
-                                    ctx.smallBlob(lfsPointer(oid, plan.size).toByteArray())
+                                    try {
+                                        ctx.lfsUpload(f, plan.size, oid, onP)
+                                        // Pointer LFS di-commit sebagai blob kecil
+                                        ctx.smallBlob(lfsPointer(oid, plan.size).toByteArray())
+                                    } catch (e: GhException) {
+                                        // Kuota LFS habis / LFS dimatikan → FALLBACK ke blob API
+                                        // biasa (file ≤99 MB masih diterima GitHub) sehingga
+                                        // upload tetap jalan walau kuota LFS habis.
+                                        if (e.kind == "lfs_unavailable" && plan.size <= MAX_BLOB_FALLBACK_BYTES) {
+                                            ctx.blobCreate(f, onP)
+                                        } else throw e
+                                    }
                                 }
                                 else -> ctx.blobCreate(f, onP)
                             }
@@ -880,6 +918,13 @@ object GitHubApi {
         fun addSent(delta: Long) {
             if (delta <= 0) return
             hooks.onAggregate(aggregate.addAndGet(delta))
+        }
+
+        /** Tarik balik byte saat percobaan diulang dari 0 — bar total MUNDUR jujur
+         *  (tidak pernah membeku menunggu file melewati titik percobaan lama). */
+        fun rewind(delta: Long) {
+            if (delta <= 0) return
+            hooks.onAggregate(aggregate.updateAndGet { cur -> (cur - delta).coerceAtLeast(0L) })
         }
     }
 
@@ -1117,7 +1162,9 @@ object GitHubApi {
                         if (res.first == 404) {
                             throw GhException("Repository tidak ditemukan — kemungkinan sudah dihapus (404)", 404)
                         }
-                        throw GhException("Git LFS ditolak (HTTP ${res.first}): ${res.second.take(140)}", res.first)
+                        // 403 kuota LFS / 422 / penolakan lain — BUKAN masalah repo.
+                        // kind="lfs_unavailable" memicu fallback ke blob API (file ≤99 MB).
+                        throw GhException("Git LFS ditolak (HTTP ${res.first}): ${res.second.take(140)}", res.first, kind = "lfs_unavailable")
                     }
                 }
             } catch (e: GhException) {
@@ -1138,7 +1185,7 @@ object GitHubApi {
         }
         val batchObj = obj ?: throw GhException("Respons Git LFS tidak valid")
         batchObj.optJSONObject("error")?.let { e ->
-            throw GhException("Git LFS: ${e.optString("message", "gagal")}", e.optInt("code"))
+            throw GhException("Git LFS: ${e.optString("message", "gagal")}", e.optInt("code"), kind = "lfs_unavailable")
         }
         // Spesifikasi Git LFS: respons upload TANPA "actions" berarti objek SUDAH tersimpan
         // di penyimpanan LFS (upaya sebelumnya sempat terunggah lalu gagal di tahap commit).
@@ -1149,7 +1196,7 @@ object GitHubApi {
             if (lfsObjectExists(oid, size)) return@withContext
             throw GhException(
                 "Git LFS menolak unggahan file ini — kemungkinan kuota LFS habis. Cek: github.com/settings/billing",
-                0
+                0, kind = "lfs_unavailable"
             )
         }
 

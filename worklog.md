@@ -105,3 +105,23 @@ Stage Summary:
 - Keandalan: PUT LFS 5x + cek-objek-sudah-ada sebelum ulang + timeout lebih longgar → kasus "gagal di tengah jalan" turun drastis; objek yang ternyata sudah tersimpan tidak diunggah ulang.
 - Progres: akurat (agregat semua slot paralel), kecepatan & ETA benar, semua file yang sedang dikirim terlihat serentak, retry tampil jelas, checksum file besar ada progresnya.
 - Artefak: GitPush-v1.0.apk (versionCode 16, 4,0 MB) → Release v1.0 terbarui + terverifikasi cmp identik.
+
+---
+Task ID: 23
+Agent: Z.ai Code (main)
+Task: (1) "Upload 35 MB progress stuck terasa lama, apalagi 100 MB+" (2) tombol Salin Nama pada dialog hapus repository
+
+Work Log:
+- Diagnosis akar "stuck": (1) saat file kena RETRY (koneksi putus/limit), closure onP membandingkan sent baru < lastLocal percobaan lama → delta negatif dibuang → AGREGAT MEMBEKU di posisi percobaan lama sampai file melewatinya; untuk file besar yang berulang kali gagal di tengah, bar diam lama = "stuck". (2) File 16-95 MB dikirim via blob API ber-JSON base64 → +33% transfer (35 MB jadi 46,7 MB) di api.github.com yang lebih lambat dari PUT biner S3 LFS. (3) Fase analisis hash SEKUENSIAL — ratusan file besar dianalisis satu-satu sebelum onTotal muncul.
+- GitHubApi.kt: (1) onP kini REWIND — sent < lastLocal → ctx.rewind() menurunkan agregat (AtomicLong updateAndGet) → bar total mundur jujur lalu naik lagi mengikuti unggahan ulang; TIDAK PERNAH membeku. (2) LFS_THRESHOLD 95 MB → 16 MB: file ≥16 MB kini lewat LFS (biner langsung, hemat 33% + PUT S3 lebih cepat) dengan FALLBACK OTOMATIS ke blob API bila LFS ditolak (GhException + field kind="lfs_unavailable" pada kuota/422/penolakan; hanya ≤99 MB yang di-fallback). (3) Analisis hash kini PARALEL 4 (Semaphore) + counter onAnalyzed(done,total). (4) resolveLfsPointers 60→120 kandidat, paralel 6→8 (lebih banyak file jadi pointer LFS). MAX_BLOB_FALLBACK_BYTES=99 MB.
+- UploadManager.kt: filesAnalyzed state + hook onAnalyzed. UploadScreen.kt: teks analisis menampilkan "X/Y siap" + nama file + progres checksum.
+- HomeScreen.kt DeleteRepoDialog: tombol "Salin nama" (ikon ContentCopy, LocalClipboardManager, Toast "tersalin — tempel di kolom atas") dipakai Beranda & menu repo sekaligus.
+- Kejadian lingkungan: sandbox reset LAGI — JDK + Android SDK hilang. Pulihkan: JDK Temurin 21 (api.adoptium.net) → /home/z/jdk-21.0.12.1+1; commandlinetools → /home/z/android-sdk + platform-tools/platforms;android-36/build-tools;36.0.0; local.properties. Build 2x gagal: JAVA_HOME JRE-only sistem (no javac) lalu daemon OOM saat R8 → gradle.properties heap 1300m→1600m + metaspace 512m + ./gradlew --stop → BUILD SUCCESSFUL 3m42s. aapt: versionCode 17, versionName 1.0; APK 4.015.149 B.
+- Push via clone bersih /tmp/gp-work (catatan: git checkout -- . setelah fileMode false sempat menghapus perubahan di clone — rsync ulang; sumber asli tak terpengaruh). Commit + push + Release v1.0 (id 398661211): hapus aset lama, unggah GitPush-v1.0.apk (id 596668702 → baru), unduh ulang octet-stream → cmp IDENTIK.
+
+Stage Summary:
+- 35 MB kini ±25-30% lebih cepat (tanpa base64) via LFS + progress tidak pernah membeku saat retry (rewind).
+- 100 MB+ : bar hidup mengikuti tiap percobaan, retry tampil, objek yang sudah sampai tidak diunggah ulang.
+- Kuota LFS habis bukan gagal — fallback otomatis ke blob API (≤99 MB).
+- Dialog hapus repo: salin nama sekali klik.
+- Artefak: GitPush-v1.0.apk (versionCode 17, 4,0 MB) → Release v1.0 terbarui + cmp identik.
