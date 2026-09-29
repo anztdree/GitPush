@@ -8,6 +8,7 @@ import com.gitpush.app.data.GitHubApi
 import com.gitpush.app.data.PickedFile
 import com.gitpush.app.data.UploadHooks
 import com.gitpush.app.data.UploadResult
+import com.gitpush.app.TransferService
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -193,6 +194,8 @@ object UploadManager {
             logEvent("Jaringan: $jenis")
         } catch (_: Exception) { }
         acquireLocks(context)
+        // Progress bar di STATUS BAR selama unggahan (foreground service — v1.0 finishing)
+        try { TransferService.start(context) } catch (_: Exception) { }
 
         job = scope.launch {
             val started = System.currentTimeMillis()

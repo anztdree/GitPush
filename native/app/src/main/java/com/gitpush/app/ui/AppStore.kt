@@ -1,5 +1,6 @@
 package com.gitpush.app.ui
 
+import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -8,6 +9,7 @@ import com.gitpush.app.data.GhRepo
 import com.gitpush.app.data.GhUser
 import com.gitpush.app.data.HistoryEntry
 import com.gitpush.app.data.Prefs
+import com.gitpush.app.TransferService
 
 sealed class Screen {
     data class Repo(
@@ -78,11 +80,20 @@ object Store {
     var prefs: Prefs? = null
         private set
 
+    /** ApplicationContext — dipakai memulai notifikasi progres transfer di status bar. */
+    var appCtx: Context? = null
+        private set
+
     fun init(p: Prefs) {
         prefs = p
         themeMode.value = p.themeMode
         defaultMsg.value = p.defaultCommitMsg
         history.value = p.history()
+    }
+
+    /** Simpan applicationContext (dipanggil sekali dari MainActivity). */
+    fun attach(c: Context) {
+        appCtx = c.applicationContext
     }
 
     fun push(s: Screen) = stack.add(s)
@@ -100,6 +111,8 @@ object Store {
         operation.done = 0L
         operation.total = 0L
         operation.running = true
+        // Progress bar di STATUS BAR (unduh/ZIP/proses panjang lain) — selaras unggahan
+        try { appCtx?.let { TransferService.start(it) } } catch (_: Exception) { }
     }
 
     fun opDetail(d: String) {

@@ -1,5 +1,7 @@
 package com.gitpush.app
 
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -72,7 +74,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val prefs = Prefs(this)
         Store.init(prefs)
+        Store.attach(this) // utk notifikasi progres transfer di status bar
         Store.token.value = prefs.token
+        // Android 13+: izin notifikasi diperlukan agar progress bar transfer
+        // (unggah/unduh) tampil di status bar — diminta sekali di awal.
+        if (Build.VERSION.SDK_INT >= 33) {
+            try {
+                if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001)
+                }
+            } catch (_: Exception) { }
+        }
         setContent {
             GitPushTheme {
                 Surface(

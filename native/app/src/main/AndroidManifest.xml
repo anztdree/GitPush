@@ -5,6 +5,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Jaga CPU & Wi-Fi tetap aktif selama unggahan besar (layar boleh mati) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Progress bar transfer di STATUS BAR (foreground service + notifikasi) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 13+: izin tampil notifikasi (progres transfer) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Akses semua file: agar folder/file di HP terbaca sempurna di file manager bawaan -->
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
@@ -34,5 +39,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Cermin progres transfer ke notifikasi status bar (unggah & unduh) -->
+        <service
+            android:name=".TransferService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
