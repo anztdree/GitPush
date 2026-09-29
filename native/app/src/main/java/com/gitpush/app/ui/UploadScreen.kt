@@ -799,10 +799,10 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                         modifier = Modifier.padding(top = 2.dp)
                     )
 
-                    // Info retry otomatis — pengguna tahu proses belum mati
+                    // Info retry/pindah jalur otomatis — pengguna tahu proses belum mati
                     UploadManager.retryMsg?.let { rm ->
                         Text(
-                            "⟳ Mengulang: $rm",
+                            "⟳ $rm",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             color = YellowWarn,

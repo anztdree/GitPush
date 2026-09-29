@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -30,6 +31,7 @@ import java.io.OutputStream
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipEntry
@@ -48,8 +50,11 @@ class UploadHooks(
     val onAggregate: (bytesSentAll: Long) -> Unit = {},
     /** BARU: progres pembacaan/checksum file saat tahap analisis (file besar bisa lama). */
     val onHash: (path: String, read: Long, total: Long) -> Unit = { _, _, _ -> },
-    /** BARU: notifikasi retry per file agar pengguna tahu proses masih berjalan. */
-    val onRetry: (path: String, attempt: Int, maxAttempts: Int, waitMs: Long) -> Unit = { _, _, _, _ -> },
+    /** BARU: notifikasi retry per file agar pengguna tahu proses masih berjalan.
+     *  reason = alasan singkat (mis. "koneksi macet — nyambung ulang" / "HTTP 503"). */
+    val onRetry: (path: String, attempt: Int, maxAttempts: Int, waitMs: Long, reason: String) -> Unit = { _, _, _, _, _ -> },
+    /** BARU: file berpindah jalur kirim (LFS bermasalah → blob API) — untuk pesan UI. */
+    val onFallback: (path: String) -> Unit = {},
     /** BARU: jumlah file yang selesai dianalisis (persiapan paralel) — (selesai, total). */
     val onAnalyzed: (done: Int, total: Int) -> Unit = { _, _ -> },
     val isCancelled: () -> Boolean = { false }
@@ -87,6 +92,55 @@ object GitHubApi {
         // untuk PUT LFS 100 MB+ di jaringan seluler lambat.
         .writeTimeout(600, TimeUnit.SECONDS)
         .build()
+
+    /** Klien HTTP/1.1 KHUSUS unggahan body besar (PUT LFS & blob base64).
+     *  AKAR MASALAH "progress 512 kb / 100 mb setelah sekian lama": koneksi HTTP/2 ke
+     *  server storage LFS bisa MENDEADLOCK flow-control — tepat ±512 KB (satu window
+     *  awal) terkirim, WINDOW_UPDATE tidak pernah datang, kirim-an diam TOTAL selamanya
+     *  (satu-satunya penyelamat dulu writeTimeout 10 MENIT per percobaan). HTTP/1.1
+     *  tidak punya flow-control level-stream → data mengalir terus selama jaringan
+     *  sanggup, dan koneksi macet nyata tetap tertangani StallWatchdog di bawah. */
+    val httpH1: OkHttpClient = http.newBuilder()
+        .protocols(listOf(Protocol.HTTP_1_1))
+        .build()
+
+    /** Batas koneksi DIAM (tanpa satu byte pun maju) saat mengirim body besar:
+     *  panggilan dibatalkan agar retry segera memakai koneksi baru — dulu koneksi
+     *  mati menunggu writeTimeout 10 menit tiap percobaan = bar beku sangat lama. */
+    private const val STALL_LIMIT_MS = 45_000L
+
+    /** Pengawas koneksi macet: loop tulis body melapor tiap progres (progress());
+     *  bila diam ≥ STALL_LIMIT_MS, Call OkHttp DIBATALKAN (call.cancel()) sehingga
+     *  tulis yang tertahan langsung melempar IOException → retryable (code 0). */
+    private class StallWatchdog {
+        private val last = AtomicLong(System.currentTimeMillis())
+        private val armed = AtomicBoolean(false)
+        @Volatile private var call: okhttp3.Call? = null
+
+        fun progress() { last.set(System.currentTimeMillis()) }
+
+        fun arm(c: okhttp3.Call) {
+            call = c
+            progress()
+            armed.set(true)
+            Thread {
+                try {
+                    while (armed.get()) {
+                        val idle = System.currentTimeMillis() - last.get()
+                        if (idle >= STALL_LIMIT_MS) {
+                            if (armed.getAndSet(false)) {
+                                try { call?.cancel() } catch (_: Exception) { }
+                            }
+                            break
+                        }
+                        Thread.sleep((STALL_LIMIT_MS - idle).coerceIn(1_000L, STALL_LIMIT_MS))
+                    }
+                } catch (_: InterruptedException) { }
+            }.apply { isDaemon = true; name = "gp-stall-watchdog" }.start()
+        }
+
+        fun stop() { armed.set(false) }
+    }
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
     private val lfsMedia = "application/vnd.git-lfs+json".toMediaType()
@@ -130,17 +184,22 @@ object GitHubApi {
             }
         }
 
-    /** Request dengan body mentah (streaming) — mengembalikan (kode, teks, retryAfterMs). */
+    /** Request dengan body mentah (streaming) — mengembalikan (kode, teks, retryAfterMs).
+     *  client: pakai httpH1 untuk unggahan besar (anti deadlock flow-control H2).
+     *  watchdog: pembatal otomatis bila pengiriman body diam terlalu lama. */
     private suspend fun callStreamed(
         url: String, method: String, token: String,
-        body: RequestBody, headers: Map<String, String> = emptyMap()
+        body: RequestBody, headers: Map<String, String> = emptyMap(),
+        client: OkHttpClient = http, watchdog: StallWatchdog? = null
     ): Triple<Int, String, Long> = withContext(Dispatchers.IO) {
         val b = Request.Builder().url(url).header("User-Agent", "GitPush-Android")
         if (token.isNotEmpty()) b.header("Authorization", "Bearer $token")
         headers.forEach { (k, v) -> b.header(k, v) }
         if (method == "PUT") b.put(body) else b.post(body)
+        val call = client.newCall(b.build())
+        watchdog?.arm(call)
         try {
-            http.newCall(b.build()).execute().use { r ->
+            call.execute().use { r ->
                 // PENTING: body HARUS dibaca PENUH. Dulu dipotong .take(800) — padahal respons
                 // batch Git LFS berisi URL presigned S3 + header AWS SigV4 yang panjangnya
                 // lebih dari 800 karakter, sehingga JSONObject gagal dengan error
@@ -151,6 +210,8 @@ object GitHubApi {
             }
         } catch (e: IOException) {
             throw GhException(e.message ?: "Koneksi gagal", 0)
+        } finally {
+            watchdog?.stop()
         }
     }
 
@@ -704,10 +765,17 @@ object GitHubApi {
                             size = p.first
                             sha256 = p.second
                         }
-                        val lfs = size > LFS_THRESHOLD_BYTES
+                        var lfs = size > LFS_THRESHOLD_BYTES
                         if (lfs && sha256 == null) {
                             hooks.onStage("Menganalisis file")
-                            sha256 = hashAndSize(resolver, f, size) { read -> hooks.onHash(f.path, read, size) }.second
+                            val p = hashAndSize(resolver, f, size) { read -> hooks.onHash(f.path, read, size) }
+                            sha256 = p.second
+                            // Pakai ukuran AKTUAL dari stream — metadata SAF/berkas bisa
+                            // MELEBIH-lebihkan. Dulu contentLength PUT diambil dari metadata:
+                            // bila metadata > aktual, OkHttp menunggu sisa byte yang tidak
+                            // pernah datang → PUT membeku selamanya (gejala mirip "stuck").
+                            size = p.first
+                            lfs = size > LFS_THRESHOLD_BYTES
                         }
                         plans[idx] = Plan(f, size, sha256, lfs)
                         totalBytes.addAndGet(size)
@@ -768,15 +836,27 @@ object GitHubApi {
                                 plan.size == 0L -> EMPTY_BLOB_SHA
                                 plan.lfs -> {
                                     val oid = plan.sha256 ?: hashAndSize(resolver, f).second
-                                    try {
+                                    val canBlob = plan.size <= MAX_BLOB_FALLBACK_BYTES
+                                    val useLfs = !ctx.lfsUnhealthy.get() || !canBlob
+                                    if (!useLfs) {
+                                        // LFS sudah terbukti bermasalah di sesi ini →
+                                        // langsung jalur cadangan, jangan buang 4-5 menit lagi.
+                                        hooks.onFallback(f.path)
+                                        ctx.blobCreate(f, onP)
+                                    } else try {
                                         ctx.lfsUpload(f, plan.size, oid, onP)
                                         // Pointer LFS di-commit sebagai blob kecil
                                         ctx.smallBlob(lfsPointer(oid, plan.size).toByteArray())
                                     } catch (e: GhException) {
-                                        // Kuota LFS habis / LFS dimatikan → FALLBACK ke blob API
-                                        // biasa (file ≤99 MB masih diterima GitHub) sehingga
-                                        // upload tetap jalan walau kuota LFS habis.
-                                        if (e.kind == "lfs_unavailable" && plan.size <= MAX_BLOB_FALLBACK_BYTES) {
+                                        val repoAccess = (e.code == 403 || e.code == 404) &&
+                                            (e.message ?: "").startsWith("Repository", true)
+                                        // LFS ditolak (kuota/matikan), koneksi macet, 5xx, dsb →
+                                        // FALLBACK ke blob API biasa (file ≤99 MB masih diterima
+                                        // GitHub) sehingga upload tetap jalan. Error akses repo
+                                        // (repo terhapus) tidak di-fallback — blob akan gagal juga.
+                                        if (canBlob && !repoAccess && e.code != 499) {
+                                            ctx.lfsUnhealthy.set(true)
+                                            hooks.onFallback(f.path)
                                             ctx.blobCreate(f, onP)
                                         } else throw e
                                     }
@@ -914,6 +994,9 @@ object GitHubApi {
         val throttle: Throttle,
         val aggregate: AtomicLong
     ) {
+        /** Tandai jalur LFS bermasalah (macet/gagal) untuk sisa sesi ini — file ≤99 MB
+         *  berikutnya langsung lewat blob API tanpa buang waktu di LFS yang sama. */
+        val lfsUnhealthy = AtomicBoolean(false)
         /** Tambah delta byte terkirim dan laporkan total agregat (thread-safe). */
         fun addSent(delta: Long) {
             if (delta <= 0) return
@@ -995,7 +1078,8 @@ object GitHubApi {
      */
     private fun streamedBlobBody(
         f: PickedFile, resolver: android.content.ContentResolver?,
-        isCancelled: () -> Boolean, onSent: (Long) -> Unit
+        isCancelled: () -> Boolean, onSent: (Long) -> Unit,
+        onBodyDone: () -> Unit = {}
     ): RequestBody = object : RequestBody() {
         override fun contentType() = jsonMedia
 
@@ -1005,50 +1089,62 @@ object GitHubApi {
         }
 
         override fun writeTo(sink: BufferedSink) {
-            val enc = java.util.Base64.getEncoder()
-            val buf = ByteArray(3 * 65536) // kelipatan 3 → padding benar per chunk; 192 KB = syscall lebih sedikit
-            sink.writeUtf8(B64_PREFIX)
-            openSource(resolver, f).use { ins ->
-                while (true) {
-                    if (isCancelled()) throw IOException("Dibatalkan")
-                    var read = 0
-                    while (read < buf.size) {
-                        val r = ins.read(buf, read, buf.size - read)
-                        if (r < 0) break
-                        read += r
+            try {
+                val enc = java.util.Base64.getEncoder()
+                val buf = ByteArray(3 * 65536) // kelipatan 3 → padding benar per chunk; 192 KB = syscall lebih sedikit
+                sink.writeUtf8(B64_PREFIX)
+                openSource(resolver, f).use { ins ->
+                    while (true) {
+                        if (isCancelled()) throw IOException("Dibatalkan")
+                        var read = 0
+                        while (read < buf.size) {
+                            val r = ins.read(buf, read, buf.size - read)
+                            if (r < 0) break
+                            read += r
+                        }
+                        if (read > 0) {
+                            val chunk = if (read < buf.size) buf.copyOf(read) else buf
+                            sink.writeUtf8(enc.encodeToString(chunk))
+                            onSent(read.toLong())
+                        }
+                        if (read < buf.size) break
                     }
-                    if (read > 0) {
-                        val chunk = if (read < buf.size) buf.copyOf(read) else buf
-                        sink.writeUtf8(enc.encodeToString(chunk))
-                        onSent(read.toLong())
-                    }
-                    if (read < buf.size) break
                 }
+                sink.writeUtf8(B64_SUFFIX)
+            } finally {
+                // Body selesai (sukses/gagal) → pengawas macet boleh berhenti; tanpa ini
+                // pengawas bisa membatalkan call yang sedang MENUNGGU RESPONS.
+                onBodyDone()
             }
-            sink.writeUtf8(B64_SUFFIX)
         }
     }
 
     /** Body biner mentah streaming (untuk PUT LFS ke storage). */
     private fun streamedRawBody(
         f: PickedFile, resolver: android.content.ContentResolver?, size: Long,
-        isCancelled: () -> Boolean, onSent: (Long) -> Unit
+        isCancelled: () -> Boolean, onSent: (Long) -> Unit,
+        onBodyDone: () -> Unit = {}
     ): RequestBody = object : RequestBody() {
         override fun contentType() = "application/octet-stream".toMediaType()
         override fun contentLength() = if (size > 0) size else -1L
 
         override fun writeTo(sink: BufferedSink) {
-            val buf = ByteArray(512 * 1024) // 512 KB — syscall lebih sedikit untuk PUT ratusan MB
-            openSource(resolver, f).use { ins ->
-                while (true) {
-                    if (isCancelled()) throw IOException("Dibatalkan")
-                    val r = ins.read(buf)
-                    if (r < 0) break
-                    if (r > 0) {
-                        sink.write(buf, 0, r)
-                        onSent(r.toLong())
+            try {
+                val buf = ByteArray(512 * 1024) // 512 KB — syscall lebih sedikit untuk PUT ratusan MB
+                openSource(resolver, f).use { ins ->
+                    while (true) {
+                        if (isCancelled()) throw IOException("Dibatalkan")
+                        val r = ins.read(buf)
+                        if (r < 0) break
+                        if (r > 0) {
+                            sink.write(buf, 0, r)
+                            onSent(r.toLong())
+                        }
                     }
                 }
+            } finally {
+                // Body selesai → pengawas berhenti sebelum kita menunggu respons server.
+                onBodyDone()
             }
         }
     }
@@ -1061,10 +1157,16 @@ object GitHubApi {
                 if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
                 throttle.gate()
                 attempt++
-                val body = streamedBlobBody(f, resolver, hooks.isCancelled, onSent)
+                val wd = StallWatchdog()
+                val body = streamedBlobBody(
+                    f, resolver, hooks.isCancelled,
+                    { n -> wd.progress(); onSent(n) },
+                    { wd.stop() }
+                )
                 val (code, text, ra) = callStreamed(
                     "$API/repos/$owner/$repo/git/blobs", "POST", token, body,
-                    mapOf("Accept" to "application/vnd.github+json", "X-GitHub-Api-Version" to "2022-11-28")
+                    mapOf("Accept" to "application/vnd.github+json", "X-GitHub-Api-Version" to "2022-11-28"),
+                    httpH1, wd
                 )
                 if (code in 200..299) {
                     throttle.success()
@@ -1078,7 +1180,7 @@ object GitHubApi {
                 if (code == 403 || code == 429) throttle.slowDown(700)
                 val wait = if (ra > 0) ra.coerceAtMost(60_000) else 1000L * attempt
                 // Pengguna harus tahu proses masih berjalan saat mengulang (dulu diam = terlihat macet)
-                hooks.onRetry(f.path, attempt, 5, wait)
+                hooks.onRetry(f.path, attempt, 5, wait, if (code == 0) "koneksi macet — nyambung ulang" else "HTTP $code")
                 delay(wait)
             }
             @Suppress("UNREACHABLE_CODE")
@@ -1216,13 +1318,22 @@ object GitHubApi {
             if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
             putAttempt++
             onSent(0)
-            val body = streamedRawBody(f, resolver, size, hooks.isCancelled, onSent)
+            val wd = StallWatchdog()
+            // HTTP/1.1 + watchdog: server storage H2 bisa deadlock di ±512 KB; koneksi
+            // yang macet dibunuh 45 dtk → retry cepat memakai koneksi baru.
+            val body = streamedRawBody(
+                f, resolver, size, hooks.isCancelled,
+                { n -> wd.progress(); onSent(n) },
+                { wd.stop() }
+            )
             // PUT file besar rawan koneksi putus di tengah jalan — GhException(code 0) diulang.
             val putCode = try {
-                callStreamed(up.optString("href"), "PUT", "", body, upHeaders).first
+                callStreamed(up.optString("href"), "PUT", "", body, upHeaders, httpH1, wd).first
             } catch (e: GhException) {
                 if (e.code != 0) throw e
                 0
+            } finally {
+                wd.stop()
             }
             if (putCode in 200..299) {
                 throttle.success()
@@ -1233,7 +1344,7 @@ object GitHubApi {
             // memutuskan mengunggah ulang ratusan MB dari nol.
             if (lfsObjectExists(oid, size)) break
             val wait = (1000L shl (putAttempt - 1)).coerceAtMost(10_000) // 1s,2s,4s,8s
-            hooks.onRetry(f.path, putAttempt, maxPut, wait)
+            hooks.onRetry(f.path, putAttempt, maxPut, wait, if (putCode == 0) "koneksi macet — nyambung ulang" else "HTTP $putCode")
             delay(wait)
         }
 

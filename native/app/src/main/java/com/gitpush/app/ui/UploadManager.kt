@@ -186,8 +186,13 @@ object UploadManager {
                         snapshot()
                         retryMsg = null
                     },
-                    onRetry = { p, attempt, max, waitMs ->
-                        retryMsg = "${p.substringAfterLast('/')} — percobaan $attempt/$max${if (waitMs > 0) " (jeda ${waitMs / 1000} d)" else ""}"
+                    onRetry = { p, attempt, max, waitMs, reason ->
+                        retryMsg = "${p.substringAfterLast('/')} — ${
+                            if (reason.isNotBlank()) reason else "percobaan $attempt/$max"
+                        }${if (waitMs > 0) " (jeda ${waitMs / 1000} d)" else ""}"
+                    },
+                    onFallback = { p ->
+                        retryMsg = "${p.substringAfterLast('/')} — jalur LFS bermasalah, memakai jalur cadangan…"
                     },
                     isCancelled = { cancelled.get() }
                 )
