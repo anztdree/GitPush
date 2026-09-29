@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Jaga CPU & Wi-Fi tetap aktif selama unggahan besar (layar boleh mati) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Akses semua file: agar folder/file di HP terbaca sempurna di file manager bawaan -->
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Folder
@@ -66,8 +67,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -356,7 +359,8 @@ fun UploadScreen() {
                     targetFolder = folder,
                     files = picked,
                     message = message,
-                    resolver = ctx.contentResolver
+                    resolver = ctx.contentResolver,
+                    context = ctx
                 )
             }
         }
@@ -1000,6 +1004,31 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                         }
                     }
                 }
+            }
+
+            // ===== Salin log diagnostik (tampil di SEMUA tahap — bila upload bermasalah,
+            // user tinggal salin & kirim ke pengembang: akar masalah langsung terlihat) =====
+            val clipboard = LocalClipboardManager.current
+            val panelCtx = LocalContext.current
+            TextButton(
+                onClick = {
+                    val pi = try {
+                        panelCtx.packageManager.getPackageInfo(panelCtx.packageName, 0)
+                    } catch (_: Exception) { null }
+                    val header = "GitPush v${pi?.versionName} (${pi?.longVersionCode}) — " +
+                        "${UploadManager.repoFull}@${UploadManager.branch}\n"
+                    clipboard.setText(AnnotatedString(header + UploadManager.logText()))
+                    Toast.makeText(
+                        panelCtx,
+                        "Log unggahan disalin — kirimkan ke pengembang bila ada masalah",
+                        Toast.LENGTH_LONG
+                    ).show()
+                },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+            ) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Salin log unggahan", fontSize = 11.sp)
             }
 
             // ===== Tombol aksi =====

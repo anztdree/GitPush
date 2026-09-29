@@ -1,5 +1,6 @@
 package com.gitpush.app.ui
 
+import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,6 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -70,6 +72,50 @@ object UploadManager {
     private var job: Job? = null
     private val cancelled = AtomicBoolean(false)
 
+    // ===== Log diagnostik unggahan (disalin dari panel bila upload bermasalah) =====
+    private val events = ArrayDeque<String>()
+    private val evLock = Any()
+
+    fun logEvent(msg: String) {
+        val ts = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        synchronized(evLock) {
+            events.addLast("[$ts] $msg")
+            while (events.size > 250) events.removeFirst()
+        }
+    }
+
+    /** Seluruh isi log diagnostik — dipakai tombol "Salin log unggahan". */
+    fun logText(): String = synchronized(evLock) { events.joinToString("\n") }
+
+    // Jaga CPU & koneksi Wi-Fi tetap hidup selama unggahan besar (layar boleh mati,
+    // ponsel boleh tidur — dulu dugaan kuat proses beku = kirim diam di tengah jalan)
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
+    private fun acquireLocks(context: Context?) {
+        if (context == null) return
+        try {
+            val appCtx = context.applicationContext
+            val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            wakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "GitPush:upload")?.apply {
+                setReferenceCounted(false)
+                acquire(6 * 60 * 60 * 1000L) // maks 6 jam
+            }
+            val wm = appCtx.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            wifiLock = wm?.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "GitPush:upload")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (_: Exception) { }
+    }
+
+    private fun releaseLocks() {
+        try { wakeLock?.takeIf { it.isHeld }?.release() } catch (_: Exception) { }
+        try { wifiLock?.takeIf { it.isHeld }?.release() } catch (_: Exception) { }
+        wakeLock = null
+        wifiLock = null
+    }
+
     /** Kompatibilitas lama: byte file terakhir (bar mini per file di panel). */
     var currentFile by mutableStateOf(""); private set
     var currentSent by mutableStateOf(0L); private set
@@ -89,7 +135,8 @@ object UploadManager {
         token: String, owner: String, repo: String, repoFullName: String,
         branch: String, targetFolder: String,
         files: List<PickedFile>, message: String,
-        resolver: android.content.ContentResolver?
+        resolver: android.content.ContentResolver?,
+        context: Context? = null
     ) {
         if (active) return
         cancelled.set(false)
@@ -118,6 +165,11 @@ object UploadManager {
         active = true
         showPanel = true
 
+        // Log diagnostik mulai dari nol untuk sesi ini
+        synchronized(evLock) { events.clear() }
+        logEvent("MULAI: ${files.size} file (${formatBytes(files.sumOf { it.size })}) → $repoFullName@$branch")
+        acquireLocks(context)
+
         job = scope.launch {
             val started = System.currentTimeMillis()
             var lastTick = started
@@ -140,6 +192,10 @@ object UploadManager {
             try {
                 // Peta path → (sent, total) untuk daftar file aktif
                 val actives = LinkedHashMap<String, Pair<Long, Long>>()
+                // Posisi progres terakhir per file (waktu, byte) — untuk diagnosa macet
+                val lastProg = ConcurrentHashMap<String, Pair<Long, Long>>()
+                var stallEvents = 0
+                var lastStageLog = ""
                 fun snapshot() {
                     activeFiles = actives.entries.toList().takeLast(4)
                         .map { Triple(it.key, it.value.first, it.value.second) }
@@ -152,6 +208,10 @@ object UploadManager {
                             s.startsWith("Menyiapkan") || s.startsWith("Menganalisis") -> "prepare"
                             s.startsWith("Mengunggah") -> "upload"
                             else -> "commit"
+                        }
+                        if (s != lastStageLog) {
+                            lastStageLog = s
+                            logEvent("Tahap: $s")
                         }
                     },
                     onTotal = { f, b ->
@@ -170,29 +230,47 @@ object UploadManager {
                         currentSent = sent
                         currentTotal = total
                         actives[p] = sent to total
+                        val first = !lastProg.containsKey(p)
+                        lastProg[p] = System.currentTimeMillis() to sent
+                        if (first) logEvent("Kirim: ${p.substringAfterLast('/')} (${formatBytes(total)})")
                         snapshot()
                         retryMsg = null // ada kemajuan → bukan sedang mengulang
                     },
                     onFileDone = { p, sz ->
                         filesDone += 1
                         actives.remove(p)
+                        lastProg.remove(p)
                         snapshot()
                         retryMsg = null
+                        logEvent("✓ Selesai: ${p.substringAfterLast('/')} (${formatBytes(sz)})")
                     },
                     onFileSkipped = { p, sz, reason ->
                         skipped = skipped + (p to reason)
                         bytesTotal = (bytesTotal - sz).coerceAtLeast(0L)
                         actives.remove(p)
+                        lastProg.remove(p)
                         snapshot()
                         retryMsg = null
+                        logEvent("✗ GAGAL: ${p.substringAfterLast('/')} — $reason")
                     },
                     onRetry = { p, attempt, max, waitMs, reason ->
+                        val lp = lastProg[p]
+                        val gap = lp?.let { (System.currentTimeMillis() - it.first) / 1000 } ?: 0L
+                        val at = lp?.second ?: 0L
+                        val stall = reason.contains("macet") || gap >= 25
+                        if (stall) stallEvents++
+                        val advice = if (stallEvents >= 3) " • SARAN: coba Wi-Fi / jaringan lain" else ""
                         retryMsg = "${p.substringAfterLast('/')} — ${
                             if (reason.isNotBlank()) reason else "percobaan $attempt/$max"
-                        }${if (waitMs > 0) " (jeda ${waitMs / 1000} d)" else ""}"
+                        }${if (waitMs > 0) " (jeda ${waitMs / 1000} d)" else ""}$advice"
+                        logEvent(
+                            "⟳ ${p.substringAfterLast('/')}: percobaan $attempt/$max — $reason " +
+                                "(posisi ${formatBytes(at)}, diam ${gap} dtk)"
+                        )
                     },
                     onFallback = { p ->
                         retryMsg = "${p.substringAfterLast('/')} — jalur LFS bermasalah, memakai jalur cadangan…"
+                        logEvent("⇄ ${p.substringAfterLast('/')}: LFS gagal → beralih ke jalur cadangan (blob API)")
                     },
                     isCancelled = { cancelled.get() }
                 )
@@ -208,21 +286,26 @@ object UploadManager {
                 skipped = res.skipped
                 filesDone = res.uploaded
                 phase = "done"
+                logEvent("SELESAI: ${res.uploaded} file masuk commit ${res.commitSha.take(10)} (durasi ${(res.elapsedMs + 999) / 1000} dtk)")
                 GitHubApi.invalidateUsage(owner, repo) // kuota Beranda/Upload dihitung ulang
                 Store.log("upload", "Upload ${res.uploaded} file (1 commit)", repoFullName)
             } catch (e: CancellationException) {
                 elapsedMs = System.currentTimeMillis() - started
                 phase = "cancel"
+                logEvent("DIBATALKAN oleh pengguna")
             } catch (e: Exception) {
                 elapsedMs = System.currentTimeMillis() - started
                 if (cancelled.get()) {
                     phase = "cancel"
+                    logEvent("DIBATALKAN oleh pengguna")
                 } else {
                     phase = "error"
                     error = GitHubApi.humanError(e)
+                    logEvent("ERROR: $error")
                 }
             } finally {
                 sampler.cancel()
+                releaseLocks()
                 active = false
             }
         }

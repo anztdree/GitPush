@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
@@ -28,6 +29,8 @@ import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -71,12 +74,13 @@ object GitHubApi {
 
     const val API = "https://api.github.com"
 
-    /** File di atas ambang ini otomatis dikirim via Git LFS.
-     *  16 MB: di atas ukuran ini jalur blob API memboroskan 33% (base64 + JSON) dan
-     *  PUT biner langsung ke storage LFS terbukti jauh lebih cepat & stabil di jaringan
-     *  seluler — keluhan "35 MB stuck lama". Bila kuota LFS habis, otomatis fallback
-     *  ke blob API (file ≤99 MB masih diterima GitHub). */
-    const val LFS_THRESHOLD_BYTES = 16L * 1024 * 1024
+    /** File di atas ambang ini otomatis dikirim via Git LFS; DI BAWAHNYA lewat blob API.
+     *  KEBIJAKAN DIBALIK (dulu 16 MB): jalur blob API (api.github.com) terbukti SATU-satunya
+     *  yang andal di jaringan pengguna — file ratusan KB s/d belasan MB selalu berhasil,
+     *  sementara PUT ke storage LFS (S3) macet di tengah jalan berulang-ulang selama 3 versi.
+     *  Biaya +33% base64 jauh lebih murah daripada unggahan yang gagal total. LFS kini hanya
+     *  untuk file >95 MB yang memang TIDAK BISA lewat blob API (limit blob GitHub 100 MB). */
+    const val LFS_THRESHOLD_BYTES = 95L * 1024 * 1024
 
     /** Ambang maksimum fallback blob API (limit blob GitHub 100 MB — sambungi margin). */
     const val MAX_BLOB_FALLBACK_BYTES = 99L * 1024 * 1024
@@ -93,6 +97,15 @@ object GitHubApi {
         .writeTimeout(600, TimeUnit.SECONDS)
         .build()
 
+    /** DNS urutkan IPv4 lebih dulu: sebagian jaringan seluler IPv6 menjatuhkan paket
+     *  besar arah KELUAR (PMTUD blackhole — gejala: file kecil lancar, file besar beku
+     *  setelah burst awal ±512 KB, unduhan tetap normal). Host tanpa A record tetap
+     *  jatuh ke IPv6, jadi aman untuk semua jaringan. */
+    private val v4FirstDns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> =
+            InetAddress.getAllByName(hostname).sortedByDescending { it is Inet4Address }
+    }
+
     /** Klien HTTP/1.1 KHUSUS unggahan body besar (PUT LFS & blob base64).
      *  AKAR MASALAH "progress 512 kb / 100 mb setelah sekian lama": koneksi HTTP/2 ke
      *  server storage LFS bisa MENDEADLOCK flow-control — tepat ±512 KB (satu window
@@ -102,12 +115,13 @@ object GitHubApi {
      *  sanggup, dan koneksi macet nyata tetap tertangani StallWatchdog di bawah. */
     val httpH1: OkHttpClient = http.newBuilder()
         .protocols(listOf(Protocol.HTTP_1_1))
+        .dns(v4FirstDns)
         .build()
 
     /** Batas koneksi DIAM (tanpa satu byte pun maju) saat mengirim body besar:
      *  panggilan dibatalkan agar retry segera memakai koneksi baru — dulu koneksi
      *  mati menunggu writeTimeout 10 menit tiap percobaan = bar beku sangat lama. */
-    private const val STALL_LIMIT_MS = 45_000L
+    private const val STALL_LIMIT_MS = 30_000L
 
     /** Pengawas koneksi macet: loop tulis body melapor tiap progres (progress());
      *  bila diam ≥ STALL_LIMIT_MS, Call OkHttp DIBATALKAN (call.cancel()) sehingga
@@ -1130,7 +1144,7 @@ object GitHubApi {
 
         override fun writeTo(sink: BufferedSink) {
             try {
-                val buf = ByteArray(512 * 1024) // 512 KB — syscall lebih sedikit untuk PUT ratusan MB
+                val buf = ByteArray(128 * 1024) // 128 KB — progres lebih halus & deteksi macet lebih cepat
                 openSource(resolver, f).use { ins ->
                     while (true) {
                         if (isCancelled()) throw IOException("Dibatalkan")
@@ -1312,7 +1326,10 @@ object GitHubApi {
         up.optJSONObject("header")?.let { h ->
             h.keys().forEach { k -> upHeaders[k] = h.optString(k) }
         }
-        val maxPut = 5
+        // File yang masih bisa di-fallback ke blob API cukup 2 percobaan PUT (bila koneksi
+        // ke storage memang macet, percobaan ke-3 tidak akan lebih baik); file >99 MB
+        // (tanpa jalur cadangan) lebih sabar: 5 percobaan.
+        val maxPut = if (size <= MAX_BLOB_FALLBACK_BYTES) 2 else 5
         var putAttempt = 0
         while (true) {
             if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
