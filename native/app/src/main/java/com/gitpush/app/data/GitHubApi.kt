@@ -60,6 +60,10 @@ class UploadHooks(
     val onFallback: (path: String) -> Unit = {},
     /** BARU: jumlah file yang selesai dianalisis (persiapan paralel) — (selesai, total). */
     val onAnalyzed: (done: Int, total: Int) -> Unit = { _, _ -> },
+    /** BARU v20: log langkah TERPERINCI saat proses berjalan (endpoint, percobaan ke-N,
+     *  byte berjalan, respons server) — tampil LIVE di panel unggahan supaya pengguna
+     *  melihat jelas apa yang sedang terjadi, bukan hanya "Kirim:" lalu diam. */
+    val onLog: (String) -> Unit = {},
     val isCancelled: () -> Boolean = { false }
 )
 
@@ -118,15 +122,22 @@ object GitHubApi {
         .dns(v4FirstDns)
         .build()
 
-    /** Batas koneksi DIAM (tanpa satu byte pun maju) saat mengirim body besar:
-     *  panggilan dibatalkan agar retry segera memakai koneksi baru — dulu koneksi
-     *  mati menunggu writeTimeout 10 menit tiap percobaan = bar beku sangat lama. */
-    private const val STALL_LIMIT_MS = 30_000L
+    /** Diam TANPA satu byte pun maju saat BODY sedang dikirim → koneksi dianggap mati
+     *  dan dibunuh agar retry segera memakai koneksi baru. 12 dtk = lebih cepat dari
+     *  kesabaran pengguna (±15-17 dtk) — baris "⟳ mengulang" muncul di log LIVE sebelum
+     *  pengguna sempat mengira proses macet. */
+    private const val STALL_BODY_MS = 12_000L
 
-    /** Pengawas koneksi macet: loop tulis body melapor tiap progres (progress());
-     *  bila diam ≥ STALL_LIMIT_MS, Call OkHttp DIBATALKAN (call.cancel()) sehingga
-     *  tulis yang tertahan langsung melempar IOException → retryable (code 0). */
-    private class StallWatchdog {
+    /** Diam sebelum byte PERTAMA terkirim = fase sambung+TLS yang sah bisa 10-20 dtk
+     *  di jaringan seluler lambat — jangan dibunuh terlalu dini (false-positive). */
+    private const val STALL_CONNECT_MS = 20_000L
+
+    /** Pengawas koneksi macet DUA TAHAP: loop tulis body melapor tiap progres
+     *  (progress()); bila diam melewati batas, Call OkHttp DIBATALKAN (call.cancel())
+     *  sehingga tulis yang tertahan langsung melempar IOException → retryable (code 0).
+     *  bytesSent = posisi kumulatif body — sebelum byte pertama berlaku batas CONNECT
+     *  (fase sambung boleh lambat), setelahnya batas BODY yang ketat. */
+    private class StallWatchdog(private val bytesSent: () -> Long = { 0L }) {
         private val last = AtomicLong(System.currentTimeMillis())
         private val armed = AtomicBoolean(false)
         @Volatile private var call: okhttp3.Call? = null
@@ -141,13 +152,14 @@ object GitHubApi {
                 try {
                     while (armed.get()) {
                         val idle = System.currentTimeMillis() - last.get()
-                        if (idle >= STALL_LIMIT_MS) {
+                        val limit = if (bytesSent() > 0L) STALL_BODY_MS else STALL_CONNECT_MS
+                        if (idle >= limit) {
                             if (armed.getAndSet(false)) {
                                 try { call?.cancel() } catch (_: Exception) { }
                             }
                             break
                         }
-                        Thread.sleep((STALL_LIMIT_MS - idle).coerceIn(1_000L, STALL_LIMIT_MS))
+                        Thread.sleep((limit - idle).coerceIn(500L, limit))
                     }
                 } catch (_: InterruptedException) { }
             }.apply { isDaemon = true; name = "gp-stall-watchdog" }.start()
@@ -158,6 +170,14 @@ object GitHubApi {
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
     private val lfsMedia = "application/vnd.git-lfs+json".toMediaType()
+
+    /** Format ringkas utk log live: 192 KB, 4.2 MB, 1.10 GB. */
+    private fun fmtLg(n: Long): String = when {
+        n >= 1L shl 30 -> String.format(java.util.Locale.US, "%.2f GB", n / 1073741824.0)
+        n >= 1L shl 20 -> String.format(java.util.Locale.US, "%.1f MB", n / 1048576.0)
+        n >= 1024L -> "${n / 1024} KB"
+        else -> "$n B"
+    }
 
     private const val B64_PREFIX = "{\"content\":\""
     private const val B64_SUFFIX = "\",\"encoding\":\"base64\"}"
@@ -1093,7 +1113,8 @@ object GitHubApi {
     private fun streamedBlobBody(
         f: PickedFile, resolver: android.content.ContentResolver?,
         isCancelled: () -> Boolean, onSent: (Long) -> Unit,
-        onBodyDone: () -> Unit = {}
+        onBodyDone: () -> Unit = {},
+        onBodyFullySent: () -> Unit = {}
     ): RequestBody = object : RequestBody() {
         override fun contentType() = jsonMedia
 
@@ -1106,6 +1127,7 @@ object GitHubApi {
             try {
                 val enc = java.util.Base64.getEncoder()
                 val buf = ByteArray(3 * 65536) // kelipatan 3 → padding benar per chunk; 192 KB = syscall lebih sedikit
+                var total = 0L
                 sink.writeUtf8(B64_PREFIX)
                 openSource(resolver, f).use { ins ->
                     while (true) {
@@ -1119,12 +1141,20 @@ object GitHubApi {
                         if (read > 0) {
                             val chunk = if (read < buf.size) buf.copyOf(read) else buf
                             sink.writeUtf8(enc.encodeToString(chunk))
-                            onSent(read.toLong())
+                            // FIX AKAR "STUCK 192 KB": kirim posisi KUMULATIF, bukan delta
+                            // per-chunk. Dulu onSent(read) mengirim 192 KB BERULANG-ULANG
+                            // (ukuran 1 chunk) — konsumen mengira posisi tak pernah maju:
+                            // bar membeku TEPAT 192 KB selamanya, agregat berhenti di chunk
+                            // pertama, kecepatan 0, ETA hilang = "stuck palsu" (juga penyebab
+                            // "512 KB" di versi lama: ukuran chunk PUT saat itu).
+                            total += read
+                            onSent(total)
                         }
                         if (read < buf.size) break
                     }
                 }
                 sink.writeUtf8(B64_SUFFIX)
+                onBodyFullySent()
             } finally {
                 // Body selesai (sukses/gagal) → pengawas macet boleh berhenti; tanpa ini
                 // pengawas bisa membatalkan call yang sedang MENUNGGU RESPONS.
@@ -1137,7 +1167,8 @@ object GitHubApi {
     private fun streamedRawBody(
         f: PickedFile, resolver: android.content.ContentResolver?, size: Long,
         isCancelled: () -> Boolean, onSent: (Long) -> Unit,
-        onBodyDone: () -> Unit = {}
+        onBodyDone: () -> Unit = {},
+        onBodyFullySent: () -> Unit = {}
     ): RequestBody = object : RequestBody() {
         override fun contentType() = "application/octet-stream".toMediaType()
         override fun contentLength() = if (size > 0) size else -1L
@@ -1145,6 +1176,7 @@ object GitHubApi {
         override fun writeTo(sink: BufferedSink) {
             try {
                 val buf = ByteArray(128 * 1024) // 128 KB — progres lebih halus & deteksi macet lebih cepat
+                var total = 0L
                 openSource(resolver, f).use { ins ->
                     while (true) {
                         if (isCancelled()) throw IOException("Dibatalkan")
@@ -1152,10 +1184,13 @@ object GitHubApi {
                         if (r < 0) break
                         if (r > 0) {
                             sink.write(buf, 0, r)
-                            onSent(r.toLong())
+                            // KUMULATIF (lihat streamedBlobBody — fix "stuck 512/192 KB")
+                            total += r
+                            onSent(total)
                         }
                     }
                 }
+                onBodyFullySent()
             } finally {
                 // Body selesai → pengawas berhenti sebelum kita menunggu respons server.
                 onBodyDone()
@@ -1163,19 +1198,38 @@ object GitHubApi {
         }
     }
 
-    /** Buat blob via API (JSON base64 streaming) dengan retry + throttle adaptif. */
+    /** Buat blob via API (JSON base64 streaming) dengan retry + throttle adaptif
+     *  + log LIVE tiap tahap (endpoint, percobaan, byte berjalan, respons). */
     private suspend fun UpCtx.blobCreate(f: PickedFile, onSent: (Long) -> Unit): String =
         withContext(Dispatchers.IO) {
+            val nm = f.path.substringAfterLast('/')
+            val maxAttempts = 4
             var attempt = 0
             while (true) {
                 if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
                 throttle.gate()
                 attempt++
-                val wd = StallWatchdog()
+                hooks.onLog("↥ $nm: api.github.com (blob) — percobaan $attempt/$maxAttempts")
+                var lastLogAt = System.currentTimeMillis()
+                var lastLogB = 0L
+                val sentRef = AtomicLong(0)
+                val wd = StallWatchdog { sentRef.get() }
                 val body = streamedBlobBody(
                     f, resolver, hooks.isCancelled,
-                    { n -> wd.progress(); onSent(n) },
-                    { wd.stop() }
+                    { n ->
+                        sentRef.set(n)
+                        wd.progress()
+                        onSent(n)
+                        // Log LIVE tiap ±2 dtk: pengguna melihat byte benar-benar mengalir
+                        val now = System.currentTimeMillis()
+                        if (now - lastLogAt >= 2000) {
+                            val rate = (n - lastLogB) * 1000 / (now - lastLogAt).coerceAtLeast(1)
+                            hooks.onLog("↥ $nm: ${fmtLg(n)} / ${fmtLg(f.size)} (${fmtLg(rate)}/dtk)")
+                            lastLogAt = now; lastLogB = n
+                        }
+                    },
+                    { wd.stop() },
+                    { hooks.onLog("↥ $nm: body terkirim — menunggu respons GitHub…") }
                 )
                 val (code, text, ra) = callStreamed(
                     "$API/repos/$owner/$repo/git/blobs", "POST", token, body,
@@ -1184,17 +1238,19 @@ object GitHubApi {
                 )
                 if (code in 200..299) {
                     throttle.success()
-                    return@withContext JSONObject(text).optString("sha")
+                    val sha = JSONObject(text).optString("sha")
+                    hooks.onLog("✓ $nm: blob diterima (sha ${sha.take(8)}…)")
+                    return@withContext sha
                 }
                 val secondary = code == 403 && (ra > 0 || text.contains("secondary", true))
                 // code == 0: koneksi putus saat mengirim body besar — blob bersifat content-addressed
                 // (idempotent) sehingga aman diulang dari awal.
                 val retryable = code in 500..599 || code == 429 || code == 0 || secondary
-                if (!retryable || attempt >= 5) throw GhException("HTTP $code: ${text.take(160)}", code, ra)
+                if (!retryable || attempt >= maxAttempts) throw GhException("HTTP $code: ${text.take(160)}", code, ra)
                 if (code == 403 || code == 429) throttle.slowDown(700)
                 val wait = if (ra > 0) ra.coerceAtMost(60_000) else 1000L * attempt
                 // Pengguna harus tahu proses masih berjalan saat mengulang (dulu diam = terlihat macet)
-                hooks.onRetry(f.path, attempt, 5, wait, if (code == 0) "koneksi macet — nyambung ulang" else "HTTP $code")
+                hooks.onRetry(f.path, attempt, maxAttempts, wait, if (code == 0) "koneksi macet — nyambung ulang" else "HTTP $code")
                 delay(wait)
             }
             @Suppress("UNREACHABLE_CODE")
@@ -1330,18 +1386,37 @@ object GitHubApi {
         // ke storage memang macet, percobaan ke-3 tidak akan lebih baik); file >99 MB
         // (tanpa jalur cadangan) lebih sabar: 5 percobaan.
         val maxPut = if (size <= MAX_BLOB_FALLBACK_BYTES) 2 else 5
+        val nmLfs = f.path.substringAfterLast('/')
+        val upHost = try {
+            java.net.URI(up.optString("href")).host ?: "storage LFS"
+        } catch (_: Exception) { "storage LFS" }
         var putAttempt = 0
         while (true) {
             if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
             putAttempt++
             onSent(0)
-            val wd = StallWatchdog()
-            // HTTP/1.1 + watchdog: server storage H2 bisa deadlock di ±512 KB; koneksi
-            // yang macet dibunuh 45 dtk → retry cepat memakai koneksi baru.
+            hooks.onLog("↥ $nmLfs: PUT $upHost (LFS) — percobaan $putAttempt/$maxPut")
+            var lastLogAt = System.currentTimeMillis()
+            var lastLogB = 0L
+            val sentRef = AtomicLong(0)
+            val wd = StallWatchdog { sentRef.get() }
+            // HTTP/1.1 + watchdog dua tahap: koneksi macet dibunuh 12 dtk setelah byte
+            // mengalir (20 dtk saat masih fase sambung) → retry cepat, koneksi baru.
             val body = streamedRawBody(
                 f, resolver, size, hooks.isCancelled,
-                { n -> wd.progress(); onSent(n) },
-                { wd.stop() }
+                { n ->
+                    sentRef.set(n)
+                    wd.progress()
+                    onSent(n)
+                    val now = System.currentTimeMillis()
+                    if (now - lastLogAt >= 2000) {
+                        val rate = (n - lastLogB) * 1000 / (now - lastLogAt).coerceAtLeast(1)
+                        hooks.onLog("↥ $nmLfs: ${fmtLg(n)} / ${fmtLg(size)} (${fmtLg(rate)}/dtk)")
+                        lastLogAt = now; lastLogB = n
+                    }
+                },
+                { wd.stop() },
+                { hooks.onLog("↥ $nmLfs: body terkirim — menunggu respons storage…") }
             )
             // PUT file besar rawan koneksi putus di tengah jalan — GhException(code 0) diulang.
             val putCode = try {
@@ -1354,6 +1429,7 @@ object GitHubApi {
             }
             if (putCode in 200..299) {
                 throttle.success()
+                hooks.onLog("✓ $nmLfs: PUT OK (HTTP $putCode)")
                 break
             }
             if (putAttempt >= maxPut) throw GhException("Upload objek LFS gagal setelah $maxPut percobaan (HTTP $putCode)")

@@ -62,6 +62,13 @@ object UploadManager {
     /** Info retry otomatis yang sedang berlangsung, mis. "video.mp4 (2/5)". */
     var retryMsg by mutableStateOf<String?>(null); private set
 
+    /** Log LIVE (salinan pendek dari events) — tampil langsung di panel unggahan
+     *  selama proses berjalan: permintaan user "log ditampilkan juga biar keliatan jelas". */
+    var logLines by mutableStateOf(listOf<String>()); private set
+
+    /** Detik TANPA satu byte pun maju (0 = data mengalir) — indikator jujur di panel. */
+    var stallSec by mutableStateOf(0L); private set
+
     var skipped by mutableStateOf(listOf<Pair<String, String>>()); private set
     var commitSha by mutableStateOf<String?>(null); private set
     var error by mutableStateOf<String?>(null); private set
@@ -81,6 +88,7 @@ object UploadManager {
         synchronized(evLock) {
             events.addLast("[$ts] $msg")
             while (events.size > 250) events.removeFirst()
+            logLines = events.toList().takeLast(80)
         }
     }
 
@@ -167,7 +175,23 @@ object UploadManager {
 
         // Log diagnostik mulai dari nol untuk sesi ini
         synchronized(evLock) { events.clear() }
+        logLines = emptyList()
+        stallSec = 0L
         logEvent("MULAI: ${files.size} file (${formatBytes(files.sumOf { it.size })}) → $repoFullName@$branch")
+        // Jenis jaringan utk diagnosa (Wi-Fi vs data seluler — perilaku unggahan beda jauh)
+        try {
+            val appCtx = context?.applicationContext
+            val cm = appCtx?.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            val caps = cm?.getNetworkCapabilities(cm.activeNetwork)
+            val jenis = when {
+                caps == null -> "tidak diketahui"
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "data seluler"
+                caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+                else -> "lainnya"
+            }
+            logEvent("Jaringan: $jenis")
+        } catch (_: Exception) { }
         acquireLocks(context)
 
         job = scope.launch {
@@ -175,10 +199,12 @@ object UploadManager {
             var lastTick = started
             var lastBytes = 0L
             val sampler = launch {
+                var lastMove = started
                 while (isActive) {
                     delay(600)
                     val now = System.currentTimeMillis()
                     val b = progressBytes()
+                    if (b != lastBytes) lastMove = now
                     val dt = now - lastTick
                     if (dt > 0) {
                         val sp = (b - lastBytes) * 1000 / dt
@@ -186,6 +212,7 @@ object UploadManager {
                         lastTick = now
                         lastBytes = b
                     }
+                    stallSec = (now - lastMove) / 1000
                     elapsedMs = now - started
                 }
             }
@@ -272,6 +299,7 @@ object UploadManager {
                         retryMsg = "${p.substringAfterLast('/')} — jalur LFS bermasalah, memakai jalur cadangan…"
                         logEvent("⇄ ${p.substringAfterLast('/')}: LFS gagal → beralih ke jalur cadangan (blob API)")
                     },
+                    onLog = { msg -> logEvent(msg) },
                     isCancelled = { cancelled.get() }
                 )
                 val target = targetFolder.trim().trimStart('/').trimEnd('/')

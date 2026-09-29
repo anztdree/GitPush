@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -67,10 +68,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -813,6 +816,17 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                             modifier = Modifier.padding(top = 3.dp)
                         )
                     }
+
+                    // Indikator "tidak ada data" — jujur: pengguna tahu pengawas sedang memantau
+                    val stallSecNow = UploadManager.stallSec
+                    if (stallSecNow >= 4) {
+                        Text(
+                            "• tidak ada data ${stallSecNow} dtk — pengawas koneksi aktif",
+                            fontSize = 11.sp,
+                            color = YellowWarn,
+                            modifier = Modifier.padding(top = 3.dp)
+                        )
+                    }
                 } else {
                     LinearProgressIndicator(Modifier.fillMaxWidth().height(8.dp), color = GreenPrimary)
                     Spacer(Modifier.height(6.dp))
@@ -1001,6 +1015,46 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                                 onClick = { showAllSkipped = true },
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
                             ) { Text("Lihat semua (${skipped.size})", fontSize = 11.sp) }
+                        }
+                    }
+                }
+            }
+
+            // ===== LOG LANGSUNG — tampil saat proses berjalan (permintaan user:
+            // "saat proses upload log ditampilkan juga, biar keliatan jelas") =====
+            val liveLog = UploadManager.logLines
+            if (liveLog.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    color = Color(0xFF12161C),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                        Text(
+                            "LOG LANGSUNG",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF6B7684)
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Box(Modifier.fillMaxWidth().heightIn(max = 150.dp)) {
+                            val logScroll = rememberScrollState()
+                            Column(Modifier.fillMaxWidth().verticalScroll(logScroll)) {
+                                liveLog.forEach { line ->
+                                    Text(
+                                        line,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 9.5.sp,
+                                        lineHeight = 13.sp,
+                                        color = Color(0xFFAEB9C6)
+                                    )
+                                }
+                            }
+                            // Gulir otomatis ke baris terbaru
+                            LaunchedEffect(liveLog.size) {
+                                logScroll.animateScrollTo(logScroll.maxValue)
+                            }
                         }
                     }
                 }
