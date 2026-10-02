@@ -3,6 +3,8 @@ package com.gitpush.app.ui
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,6 +50,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +62,27 @@ import com.gitpush.app.data.GhUser
 import com.gitpush.app.data.GitHubApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+/** Statistik hero profil — bisa diklik (pengikut/mengikuti) dengan penanda panah kecil. */
+@Composable
+private fun ProfileHeroStat(value: String, label: String, onClick: (() -> Unit)? = null) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(enabled = onClick != null) { onClick?.invoke() }
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = Color.White.copy(alpha = 0.66f), fontSize = 10.sp)
+            if (onClick != null) {
+                Spacer(Modifier.width(3.dp))
+                Text(":", color = Color.White.copy(alpha = 0.45f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
 
 private fun histIcon(kind: String) = when (kind) {
     "upload" -> Icons.Filled.Upload
@@ -102,81 +127,99 @@ fun ProfileScreen() {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
     ) {
-        // ===== Kartu profil =====
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+        // ===== Kartu profil — hero gradien + statistik =====
+        HeroPanel {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(66.dp)
+                        .background(Color.White.copy(alpha = 0.16f), androidx.compose.foundation.shape.CircleShape)
+                        .padding(2.dp)
+                ) {
                     Avatar(u?.avatarUrl ?: "", 62.dp)
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            u?.name ?: u?.login ?: "Memuat…",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 17.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            "@${u?.login ?: "…"}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp
-                        )
-                        if (!u?.bio.isNullOrBlank()) {
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                u!!.bio!!,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        if (!u?.company.isNullOrBlank() || !u?.location.isNullOrBlank()) {
-                            Spacer(Modifier.height(3.dp))
-                            val meta = listOfNotNull(u?.company, u?.location).joinToString("  •  ")
-                            Text(
-                                meta,
-                                color = GrayMuted,
-                                fontSize = 10.5.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { showEditProfile = true },
-                        enabled = u != null,
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
-                    ) {
-                        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(13.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        u?.name ?: u?.login ?: "Memuat…",
+                        color = Color.White,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 18.sp,
+                        letterSpacing = (-0.3).sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "@${u?.login ?: "…"}",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 12.sp
+                    )
+                }
+                Surface(
+                    onClick = { showEditProfile = true },
+                    enabled = u != null,
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.White.copy(alpha = 0.16f)
+                ) {
+                    Row(Modifier.padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color.White)
                         Spacer(Modifier.width(5.dp))
-                        Text("Edit", fontSize = 12.sp)
+                        Text("Edit", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatChip("${u?.publicRepos ?: 0}", "repo publik")
-                    StatChip("${u?.followers ?: 0}", "pengikut") { showFollowers = true }
-                    StatChip("${u?.following ?: 0}", "mengikuti") { showFollowing = true }
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = { showGists = true },
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
-                    ) {
-                        Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(14.dp), tint = BlueAccent)
+            }
+            if (!u?.bio.isNullOrBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    u!!.bio!!,
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (!u?.company.isNullOrBlank() || !u?.location.isNullOrBlank()) {
+                Spacer(Modifier.height(3.dp))
+                val meta = listOfNotNull(u?.company, u?.location).joinToString("  •  ")
+                Text(
+                    meta,
+                    color = Color.White.copy(alpha = 0.62f),
+                    fontSize = 10.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                ProfileHeroStat("${u?.publicRepos ?: 0}", "repo publik")
+                ProfileHeroStat("${u?.followers ?: 0}", "pengikut") { showFollowers = true }
+                ProfileHeroStat("${u?.following ?: 0}", "mengikuti") { showFollowing = true }
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    onClick = { showGists = true },
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.White.copy(alpha = 0.13f),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(Modifier.padding(vertical = 9.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
                         Spacer(Modifier.width(5.dp))
-                        Text("Gist saya", fontSize = 12.sp)
+                        Text("Gist saya", fontSize = 12.sp, color = Color.White)
                     }
-                    OutlinedButton(
-                        onClick = { showOrgs = true },
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
-                    ) {
-                        Icon(Icons.Filled.Business, contentDescription = null, modifier = Modifier.size(14.dp), tint = PurpleAccent)
+                }
+                Surface(
+                    onClick = { showOrgs = true },
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.White.copy(alpha = 0.13f),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(Modifier.padding(vertical = 9.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.Business, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
                         Spacer(Modifier.width(5.dp))
-                        Text("Organisasi", fontSize = 12.sp)
+                        Text("Organisasi", fontSize = 12.sp, color = Color.White)
                     }
                 }
             }

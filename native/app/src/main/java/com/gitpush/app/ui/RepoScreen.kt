@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -24,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -78,6 +80,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -548,6 +551,7 @@ fun RepoScreen(s: Screen.Repo) {
                 // ===== Kartu ringkasan + aksi cepat ala GitHub =====
                 item {
                     RepoOverviewCard(
+                        fullName = s.fullName,
                         info = repoInfo,
                         isPrivate = s.isPrivate,
                         starred = starred,
@@ -1043,47 +1047,50 @@ private fun FileRow(
     onDelete: () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+    Surface(
+        onClick = onClick,
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
     ) {
-        Surface(
-            onClick = onClick,
-            color = MaterialTheme.colorScheme.background,
-            modifier = Modifier.weight(1f)
-        ) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                FileTypeBadge(node.name, node.type == "dir", size = 38.dp, iconSize = 20.dp)
-                Spacer(Modifier.size(12.dp))
-                Column(Modifier.weight(1f)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            FileTypeBadge(node.name, node.type == "dir", size = 40.dp, iconSize = 21.dp)
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         node.name,
                         fontSize = 14.sp,
                         fontWeight = if (node.type == "dir") FontWeight.SemiBold else FontWeight.Normal,
                         maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
+                    if (node.isLfs) {
+                        Spacer(Modifier.width(6.dp))
+                        LfsTag()
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     // Status update terakhir: HANYA waktu — tanpa pesan commit.
                     // (Pesan commit memotong tampilan waktu di layar sempit.)
-                    lastCommit?.let { lc ->
-                        val t = timeAgo(lc.date)
-                        if (t != "-") {
-                            Spacer(Modifier.height(1.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Filled.History,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(11.dp),
-                                    tint = GreenPrimary.copy(alpha = 0.75f)
-                                )
-                                Spacer(Modifier.size(4.dp))
-                                Text(
-                                    "Diperbarui $t",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp
-                                )
-                            }
-                        }
+                    val shownTime = lastCommit?.let { lc -> timeAgo(lc.date) }
+                    if (shownTime != null && shownTime != "-") {
+                        Icon(
+                            Icons.Filled.History,
+                            contentDescription = null,
+                            modifier = Modifier.size(11.dp),
+                            tint = GreenPrimary.copy(alpha = 0.75f)
+                        )
+                        Spacer(Modifier.size(4.dp))
+                        Text(
+                            shownTime,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp
+                        )
+                        Spacer(Modifier.size(8.dp))
                     }
                     Text(
                         when {
@@ -1095,7 +1102,7 @@ private fun FileRow(
                                 }
                                 if (isEmpty()) append("folder")
                             }
-                            node.isLfs -> "LFS • ${formatBytes(node.size)}"
+                            node.isLfs -> "Git LFS • ${formatBytes(node.size)}"
                             else -> formatBytes(node.size)
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1103,9 +1110,15 @@ private fun FileRow(
                     )
                 }
             }
-        }
-        IconButton(onClick = { menu = true }) {
-            Icon(Icons.Filled.MoreVert, contentDescription = "Menu ${node.name}", tint = GrayMuted)
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = GrayMuted.copy(alpha = 0.55f),
+                modifier = Modifier.size(18.dp)
+            )
+            IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.MoreVert, contentDescription = "Menu ${node.name}", tint = GrayMuted, modifier = Modifier.size(17.dp))
+            }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             if (node.type == "dir") {
@@ -1630,6 +1643,7 @@ private fun MoveDialog(
 /** Kartu ringkasan repository: deskripsi, statistik, dan baris aksi cepat ala GitHub. */
 @Composable
 private fun RepoOverviewCard(
+    fullName: String,
     info: GhRepo?,
     isPrivate: Boolean,
     starred: Boolean,
@@ -1643,79 +1657,166 @@ private fun RepoOverviewCard(
     onFork: () -> Unit,
     onZip: () -> Unit
 ) {
-    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        HeroPanel {
+            // ===== Baris identitas: ikon kaca + nama + chip =====
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(46.dp).background(Color.White.copy(alpha = 0.15f), RoundedCornerShape(15.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (isPrivate) Icons.Filled.Lock else Icons.Filled.Folder,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(23.dp)
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            fullName,
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 17.sp,
+                            letterSpacing = (-0.3).sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        // chip visibilitas gelap-transparan di atas hero
+                        Surface(shape = RoundedCornerShape(7.dp), color = Color.White.copy(alpha = 0.16f)) {
+                            Row(Modifier.padding(horizontal = 7.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    if (isPrivate) Icons.Filled.Lock else Icons.Filled.Public,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    if (isPrivate) "Privat" else "Publik",
+                                    color = Color.White,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                    info?.language?.let { l ->
+                        Spacer(Modifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(8.dp).background(langColor(l), CircleShape))
+                            Spacer(Modifier.width(5.dp))
+                            Text(l, color = Color.White.copy(alpha = 0.78f), fontSize = 11.5.sp)
+                        }
+                    }
+                }
+            }
             if (!info?.description.isNullOrBlank()) {
+                Spacer(Modifier.height(10.dp))
                 Text(
                     info!!.description!!,
                     fontSize = 12.5.sp,
                     lineHeight = 18.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = Color.White.copy(alpha = 0.82f),
+                    maxLines = 3,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.height(8.dp))
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Star, contentDescription = null, modifier = Modifier.size(13.dp), tint = GrayMuted)
-                Spacer(Modifier.size(4.dp))
-                Text("${info?.stars ?: 0}", fontSize = 11.5.sp, color = GrayMuted)
-                Spacer(Modifier.size(10.dp))
-                Icon(Icons.Filled.CallSplit, contentDescription = null, modifier = Modifier.size(13.dp), tint = GrayMuted)
-                Spacer(Modifier.size(4.dp))
-                Text("${info?.forks ?: 0}", fontSize = 11.5.sp, color = GrayMuted)
-                Spacer(Modifier.size(10.dp))
-                Icon(Icons.Filled.BugReport, contentDescription = null, modifier = Modifier.size(13.dp), tint = GrayMuted)
-                Spacer(Modifier.size(4.dp))
-                Text("${info?.issues ?: 0}", fontSize = 11.5.sp, color = GrayMuted)
-                Spacer(Modifier.size(10.dp))
-                Icon(Icons.Filled.Visibility, contentDescription = null, modifier = Modifier.size(13.dp), tint = GrayMuted)
-                Spacer(Modifier.size(4.dp))
-                Text("${info?.watchers ?: 0}", fontSize = 11.5.sp, color = GrayMuted)
-                Spacer(Modifier.weight(1f))
-                usage?.let {
-                    Text(
-                        formatBytes(it),
-                        fontSize = 11.5.sp,
-                        color = GrayMuted,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
+            Spacer(Modifier.height(12.dp))
+            // ===== Statistik 4 kolom ala profil GitHub =====
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                HeroStat("${info?.stars ?: 0}", "star")
+                HeroStat("${info?.forks ?: 0}", "fork")
+                HeroStat("${info?.issues ?: 0}", "issue")
+                HeroStat("${info?.watchers ?: 0}", "pantau")
+                HeroStat(usage?.let { formatBytes(it) } ?: "…", "ukuran")
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(12.dp))
+            // ===== 4 aksi cepat di dalam hero =====
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                QuickAction(
+                HeroAction(
                     icon = if (starred) Icons.Filled.Star else Icons.Filled.StarBorder,
                     label = if (starred) "Disukai" else "Star",
-                    tint = if (starred) YellowWarn else GrayMuted,
+                    active = starred,
                     enabled = !starBusy,
                     onClick = onStar,
                     modifier = Modifier.weight(1f)
                 )
-                QuickAction(
+                HeroAction(
                     icon = Icons.Filled.CallSplit,
                     label = "Fork",
-                    tint = BlueAccent,
+                    active = false,
                     enabled = !forkBusy,
                     onClick = onFork,
                     modifier = Modifier.weight(1f)
                 )
-                QuickAction(
+                HeroAction(
                     icon = Icons.Filled.Visibility,
                     label = if (watching) "Dipantau" else "Pantau",
-                    tint = if (watching) BlueAccent else GrayMuted,
+                    active = watching,
                     enabled = !watchBusy,
                     onClick = onWatch,
                     modifier = Modifier.weight(1f)
                 )
-                QuickAction(
+                HeroAction(
                     icon = Icons.Filled.Download,
-                    label = "Unduh ZIP",
-                    tint = GreenPrimary,
+                    label = "ZIP",
+                    active = false,
                     enabled = true,
                     onClick = onZip,
                     modifier = Modifier.weight(1f)
                 )
             }
         }
+    }
+}
+
+/** Statistik hero: angka tebal putih + label kecil transparan. */
+@Composable
+private fun HeroStat(value: String, label: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+        Text(label, color = Color.White.copy(alpha = 0.62f), fontSize = 10.sp)
+    }
+}
+
+/** Aksi cepat di atas hero: kotak kaca + ikon + label — aktif menyala kuning. */
+@Composable
+private fun HeroAction(
+    icon: ImageVector,
+    label: String,
+    active: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(13.dp))
+            .background(Color.White.copy(alpha = if (active) 0.24f else 0.11f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 8.dp)
+            .fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = if (active) Color(0xFFFFE082) else Color.White.copy(alpha = 0.92f),
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            label,
+            fontSize = 10.5.sp,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            color = if (active) Color(0xFFFFE082) else Color.White.copy(alpha = 0.85f),
+            maxLines = 1
+        )
     }
 }
 

@@ -8,6 +8,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
@@ -19,14 +20,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gitpush.app.R
 
-// Palet ala GitHub dark (#0d1117)
+// Palet ala GitHub dark — dimodernisasi (lebih dalam, kontras lebih kaya)
 val GreenPrimary = Color(0xFF3FB950)
 val GreenDeep = Color(0xFF238636)
+val GreenGlow = Color(0xFF56D364)
 val BlueAccent = Color(0xFF58A6FF)
 val PurpleAccent = Color(0xFFBC8CFF)
+val PinkAccent = Color(0xFFFF7B72)
 val RedDanger = Color(0xFFF85149)
 val YellowWarn = Color(0xFFD29922)
 val GrayMuted = Color(0xFF8B949E)
+
+/** Gradien identitas GitPush — hijau GitHub yang hidup (dipakai hero & logo). */
+val GreenGradient = Brush.linearGradient(listOf(Color(0xFF1F6F33), GreenDeep, GreenPrimary))
+val GreenGradientVert = Brush.verticalGradient(listOf(GreenDeep, Color(0xFF196C32)))
+/** Gradien lembut untuk aksen kartu (gelap): transparan → hijau tipis. */
+val GreenTintGradient = Brush.linearGradient(
+    listOf(GreenPrimary.copy(alpha = 0.16f), GreenPrimary.copy(alpha = 0.03f))
+)
 
 /**
  * Inter Variable — satu file TTF, empat bobot diambil lewat sumbu wght.
@@ -126,25 +137,27 @@ private val GpShapes = Shapes(
 
 private val DarkColors = darkColorScheme(
     primary = GreenPrimary,
-    onPrimary = Color(0xFFFFFFFF),
+    onPrimary = Color(0xFF04260F),
     primaryContainer = GreenDeep,
-    onPrimaryContainer = Color(0xFFFFFFFF),
+    onPrimaryContainer = Color(0xFFD2F8D2),
     secondary = BlueAccent,
     onSecondary = Color(0xFF0D1117),
     secondaryContainer = Color(0xFF1F3A52),
     onSecondaryContainer = Color(0xFFA5D6FF),
     tertiary = PurpleAccent,
-    background = Color(0xFF0D1117),
+    background = Color(0xFF0A0E14),
     onBackground = Color(0xFFE6EDF3),
-    surface = Color(0xFF161B22),
+    surface = Color(0xFF10161D),
     onSurface = Color(0xFFE6EDF3),
-    surfaceVariant = Color(0xFF21262D),
-    onSurfaceVariant = Color(0xFF8B949E),
-    surfaceContainer = Color(0xFF161B22),
-    surfaceContainerHigh = Color(0xFF1C2128),
-    surfaceContainerHighest = Color(0xFF21262D),
-    outline = Color(0xFF30363D),
-    outlineVariant = Color(0xFF21262D),
+    surfaceVariant = Color(0xFF1A222B),
+    onSurfaceVariant = Color(0xFF93A1AF),
+    surfaceContainer = Color(0xFF10161D),
+    surfaceContainerHigh = Color(0xFF161D26),
+    surfaceContainerHighest = Color(0xFF1C242E),
+    surfaceBright = Color(0xFF222B36),
+    surfaceDim = Color(0xFF0A0E14),
+    outline = Color(0xFF2B3440),
+    outlineVariant = Color(0xFF1E2630),
     error = RedDanger,
     onError = Color(0xFFFFFFFF),
     errorContainer = Color(0xFF3D1E20),
@@ -157,13 +170,17 @@ private val LightColors = lightColorScheme(
     primaryContainer = Color(0xFFD2F8D2),
     onPrimaryContainer = Color(0xFF04260F),
     secondary = Color(0xFF0969DA),
-    background = Color(0xFFF6F8FA),
+    background = Color(0xFFF4F7F9),
     onBackground = Color(0xFF1F2328),
     surface = Color(0xFFFFFFFF),
     onSurface = Color(0xFF1F2328),
-    surfaceVariant = Color(0xFFEFF2F5),
+    surfaceVariant = Color(0xFFEDF1F4),
     onSurfaceVariant = Color(0xFF59636E),
+    surfaceContainer = Color(0xFFFFFFFF),
+    surfaceContainerHigh = Color(0xFFF6F8FA),
+    surfaceContainerHighest = Color(0xFFEFF2F5),
     outline = Color(0xFFD0D7DE),
+    outlineVariant = Color(0xFFE4E9ED),
     error = Color(0xFFCF222E)
 )
 

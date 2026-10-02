@@ -53,6 +53,7 @@ import com.gitpush.app.ui.BlueAccent
 import com.gitpush.app.ui.EditorScreen
 import com.gitpush.app.ui.GitPushTheme
 import com.gitpush.app.ui.GreenDeep
+import com.gitpush.app.ui.GreenGlow
 import com.gitpush.app.ui.GreenPrimary
 import com.gitpush.app.ui.GrayMuted
 import com.gitpush.app.ui.HomeScreen
@@ -127,24 +128,38 @@ fun GitPushApp() {
 private fun Splash() {
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                Modifier
-                    .size(88.dp)
-                    .background(
-                        Brush.linearGradient(listOf(GreenDeep, GreenPrimary)),
-                        RoundedCornerShape(24.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Filled.Upload,
-                    contentDescription = "Logo GitPush",
-                    tint = Color.White,
-                    modifier = Modifier.size(44.dp)
+            Box(contentAlignment = Alignment.Center) {
+                // glow lembut di sekeliling logo
+                Box(
+                    Modifier
+                        .size(128.dp)
+                        .background(
+                            androidx.compose.ui.graphics.Brush.radialGradient(
+                                listOf(GreenPrimary.copy(alpha = 0.20f), androidx.compose.ui.graphics.Color.Transparent)
+                            )
+                        )
                 )
+                Box(
+                    Modifier
+                        .size(88.dp)
+                        .background(
+                            androidx.compose.ui.graphics.Brush.linearGradient(
+                                listOf(androidx.compose.ui.graphics.Color(0xFF1F6F33), GreenDeep, GreenGlow)
+                            ),
+                            RoundedCornerShape(26.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.Upload,
+                        contentDescription = "Logo GitPush",
+                        tint = androidx.compose.ui.graphics.Color.White,
+                        modifier = Modifier.size(44.dp)
+                    )
+                }
             }
             Spacer(Modifier.height(14.dp))
-            Text("GitPush", fontWeight = FontWeight.Bold, fontSize = 22.sp)
+            Text("GitPush", fontWeight = FontWeight.ExtraBold, fontSize = 23.sp, letterSpacing = (-0.5).sp)
             Spacer(Modifier.height(4.dp))
             Text(
                 "Kelola GitHub dari HP — native Android",

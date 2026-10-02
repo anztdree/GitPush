@@ -3,6 +3,7 @@ package com.gitpush.app.ui
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,7 +33,11 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.TextFields
@@ -43,7 +48,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -53,10 +61,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -539,6 +559,233 @@ fun MetaChip(icon: ImageVector, text: String, tint: Color = GrayMuted) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(12.dp))
         Spacer(Modifier.width(3.dp))
         Text(text, color = GrayMuted, fontSize = 11.sp)
+    }
+}
+
+// ---------- Komponen desain premium (overhaul tampilan) ----------
+
+/**
+ * Panel hero bergradien hijau dengan lingkaran dekoratif — identitas visual baru.
+ * Konten di dalamnya berwarna terang (putih/putih 70%).
+ */
+@Composable
+fun HeroPanel(
+    modifier: Modifier = Modifier,
+    corner: Dp = 22.dp,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
+) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(corner))
+            .background(Brush.linearGradient(listOf(Color(0xFF12351E), Color(0xFF17502C), Color(0xFF1F6F33))))
+    ) {
+        // lingkaran dekoratif transparan — kedalaman tanpa gambar
+        Box(
+            Modifier
+                .offset(x = (-34).dp, y = (-46).dp)
+                .size(150.dp)
+                .alpha(0.9f)
+                .background(Color.White.copy(alpha = 0.05f), CircleShape)
+        )
+        Box(
+            Modifier
+                .offset(x = 250.dp, y = 34.dp)
+                .size(120.dp)
+                .alpha(0.8f)
+                .background(Color.White.copy(alpha = 0.045f), CircleShape)
+        )
+        Box(
+            Modifier
+                .offset(x = 190.dp, y = (-30).dp)
+                .size(56.dp)
+                .alpha(0.7f)
+                .background(Color.White.copy(alpha = 0.05f), CircleShape)
+        )
+        Column(Modifier.fillMaxWidth().padding(18.dp), content = content)
+    }
+}
+
+/** Kartu standar GitPush: sudut membulat 18, garis tipis, permukaan rata — modern & bersih. */
+@Composable
+fun GpCard(
+    modifier: Modifier = Modifier,
+    container: Color? = null,
+    corner: Dp = 18.dp,
+    padding: Dp = 16.dp,
+    onClick: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val shape = RoundedCornerShape(corner)
+    val bg = container ?: MaterialTheme.colorScheme.surface
+    val border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    if (onClick != null) {
+        Surface(
+            onClick = onClick,
+            shape = shape,
+            color = bg,
+            border = border,
+            modifier = modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.fillMaxWidth().padding(padding), content = content)
+        }
+    } else {
+        Surface(shape = shape, color = bg, border = border, modifier = modifier.fillMaxWidth()) {
+            Column(Modifier.fillMaxWidth().padding(padding), content = content)
+        }
+    }
+}
+
+/** Kolom pencarian pil penuh — membulat, di atas permukaan varian, tanpa garis. */
+@Composable
+fun SearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        placeholder = { Text(placeholder, color = GrayMuted) },
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = GrayMuted) },
+        trailingIcon = {
+            if (value.isNotEmpty()) {
+                IconButton(onClick = { onValueChange("") }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Bersihkan", Modifier.size(18.dp), tint = GrayMuted)
+                }
+            }
+        },
+        shape = RoundedCornerShape(15.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+            unfocusedBorderColor = Color.Transparent,
+            focusedBorderColor = GreenPrimary.copy(alpha = 0.55f),
+            cursorColor = GreenPrimary,
+            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+            unfocusedTextColor = MaterialTheme.colorScheme.onSurface
+        ),
+        singleLine = true,
+        modifier = modifier.fillMaxWidth()
+    )
+}
+
+/**
+ * Tile aksi cepat: ikon dalam kotak membulat berwarna + label di bawah.
+ * Dipakai berjajar 4 di ringkasan repo & beranda.
+ */
+@Composable
+fun ActionTile(
+    icon: ImageVector,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    active: Boolean = false
+) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (active) tint.copy(alpha = 0.16f) else Color.Transparent)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 10.dp)
+            .fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .background(tint.copy(alpha = if (active) 0.28f else 0.15f), RoundedCornerShape(13.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(21.dp))
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            color = if (active) tint else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+    }
+}
+
+/** Baris kerangka (skeleton) yang berdenyut — pengganti spinner saat memuat daftar. */
+@Composable
+fun SkeletonRows(rows: Int = 6, modifier: Modifier = Modifier) {
+    val tr = rememberInfiniteTransition(label = "sk")
+    val a by tr.animateFloat(
+        initialValue = 0.35f, targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "a"
+    )
+    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        repeat(rows) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(40.dp).alpha(a).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(13.dp)))
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Box(Modifier.fillMaxWidth(0.55f).height(13.dp).alpha(a).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp)))
+                        Spacer(Modifier.height(7.dp))
+                        Box(Modifier.fillMaxWidth(0.32f).height(10.dp).alpha(a).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(5.dp)))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Tag kecil "LFS" — penanda file tersimpan di Git LFS (bisa diunduh isi aslinya). */
+@Composable
+fun LfsTag() {
+    Surface(
+        shape = RoundedCornerShape(5.dp),
+        color = PurpleAccent.copy(alpha = 0.16f)
+    ) {
+        Text(
+            "LFS",
+            color = PurpleAccent,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.6.sp,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+        )
+    }
+}
+
+/** Chip status visibilitas repo (Privat kuning / Publik hijau). */
+@Composable
+fun VisibilityChip(isPrivate: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(7.dp),
+        color = if (isPrivate) YellowWarn.copy(alpha = 0.15f) else GreenPrimary.copy(alpha = 0.14f)
+    ) {
+        Row(
+            Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                if (isPrivate) Icons.Filled.Lock else Icons.Filled.Public,
+                contentDescription = null,
+                tint = if (isPrivate) YellowWarn else GreenPrimary,
+                modifier = Modifier.size(11.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                if (isPrivate) "Privat" else "Publik",
+                color = if (isPrivate) YellowWarn else GreenPrimary,
+                fontSize = 10.5.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
     }
 }
 

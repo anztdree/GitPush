@@ -505,7 +505,12 @@ object GitHubApi {
             val b64 = if (o.isNull("content")) null else o.optString("content").takeIf { it.isNotBlank() }
             var size = o.optLong("size")
             var isLfs = false
-            if (b64 != null && size in 120..160) {
+            // PENTING (bug unduh LFS): Contents API untuk SATU FILE melaporkan "size" =
+            // ukuran ASLI objek LFS (mis. 104857600), BUKAN ukuran pointer ±130 B seperti
+            // pada daftar folder / git trees. Deteksi pointer karenanya TIDAK BOLEH
+            // bergantung pada rentang ukuran — cukup periksa isinya. Isi hanya dikirim
+            // untuk file < 1 MB (pointer selalu kecil), jadi pengecekan ini murah.
+            if (b64 != null) {
                 val txt = runCatching { String(Base64.decode(b64, Base64.DEFAULT)) }.getOrDefault("")
                 lfsPointerInfo(txt)?.let { (_, real) -> size = real; isLfs = true }
             }
@@ -634,14 +639,17 @@ object GitHubApi {
 
     /**
      * Selidiki blob kecil (kandidat pointer LFS: 120–160 B — panjang pointer selalu 124–140 B,
-     * maks 120 blob, 8 paralel) → peta blobSha → (oid, ukuran asli). Gagal per-blob diabaikan.
-     * Ambang LFS kini 16 MB → lebih banyak file jadi pointer, jadi kapasitas dinaikkan dari 60.
+     * 8 paralel) → peta blobSha → (oid, ukuran asli). Gagal per-blob diabaikan.
+     * maxProbes: pemeriksaan layar folder 120 (cukup utk tampilan ukuran); unduh ZIP
+     * memakai 400 supaya folder berisi BANYAK file kecil tidak mendorong pointer LFS
+     * keluar daftar (dulu ZIP berisi teks pointer, bukan isi aslinya).
      */
     suspend fun resolveLfsPointers(
         token: String, owner: String, repo: String,
-        candidates: List<Pair<String, Long>> // sha → ukuran di tree
+        candidates: List<Pair<String, Long>>, // sha → ukuran di tree
+        maxProbes: Int = 120
     ): Map<String, Pair<String, Long>> {
-        val sel = candidates.filter { it.second in 120..160 }.take(120)
+        val sel = candidates.filter { it.second in 120..160 }.take(maxProbes)
         if (sel.isEmpty()) return emptyMap()
         val sem = Semaphore(8)
         val out = ConcurrentHashMap<String, Pair<String, Long>>()
@@ -1633,18 +1641,18 @@ object GitHubApi {
         onStage("Membaca metadata…")
         val meta = fetchFileMeta(token, owner, repo, node.path, ref)
 
-        // Deteksi pointer LFS: (1) sudah terdeteksi fetchFileMeta (isLfs, pointer ±130 B selalu
-        // dikembalikan penuh oleh Contents API), atau (2) file kecil → cek murah dari bytes.
+        // Deteksi pointer LFS: (1) sudah terdeteksi fetchFileMeta (isLfs — kini cek ISI,
+        // bukan rentang ukuran, karena API satu-file melaporkan ukuran ASLI utk LFS),
+        // (2) isi kecil yang belum terdeteksi, atau (3) blob kecil tanpa isi → cek murah dari bytes.
         val ptr: Pair<String, Long>? = if (meta.isLfs) {
             val ptxt = if (!meta.contentB64.isNullOrEmpty())
                 String(Base64.decode(meta.contentB64, Base64.DEFAULT))
             else String(fetchBlobBytes(token, owner, repo, meta.sha))
             lfsPointerInfo(ptxt)
-        } else if (meta.size in 1..1024) {
-            val bytes = if (!meta.contentB64.isNullOrEmpty())
-                Base64.decode(meta.contentB64, Base64.DEFAULT)
-            else fetchBlobBytes(token, owner, repo, meta.sha)
-            lfsPointerInfo(String(bytes))
+        } else if (!meta.contentB64.isNullOrEmpty() && meta.size in 1..1024) {
+            lfsPointerInfo(String(Base64.decode(meta.contentB64, Base64.DEFAULT)))
+        } else if (meta.contentB64.isNullOrEmpty() && meta.size in 1..1024) {
+            lfsPointerInfo(String(fetchBlobBytes(token, owner, repo, meta.sha)))
         } else null
 
         when {
@@ -1703,7 +1711,8 @@ object GitHubApi {
         blobs: List<TreeNode>, onProgress: (Int, Int, String) -> Unit
     ): Unit = withContext(Dispatchers.IO) {
         if (blobs.size > 1500) throw GhException("Terlalu banyak file (${blobs.size}). Maksimal 1500 file per unduhan ZIP.")
-        val ptrs = resolveLfsPointers(token, owner, repo, blobs.map { it.sha to it.size })
+        // maxProbes 400: ZIP harus berisi isi ASLI semua objek LFS, bukan pointer.
+        val ptrs = resolveLfsPointers(token, owner, repo, blobs.map { it.sha to it.size }, 400)
         val totalSize = blobs.sumOf { ptrs[it.sha]?.second ?: it.size }
         if (totalSize > 500L * 1024 * 1024) {
             throw GhException("Total ukuran melebihi 500 MB — unduh per folder lewat menu folder")
