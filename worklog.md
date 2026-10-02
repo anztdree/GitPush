@@ -125,3 +125,26 @@ Stage Summary:
 - Kuota LFS habis bukan gagal — fallback otomatis ke blob API (≤99 MB).
 - Dialog hapus repo: salin nama sekali klik.
 - Artefak: GitPush-v1.0.apk (versionCode 17, 4,0 MB) → Release v1.0 terbarui + cmp identik.
+
+---
+Task ID: 24
+Agent: Z.ai Code (main)
+Task: (1) Bug unduh file Git LFS; (2) rombak tampilan — "terlalu minimal"
+
+Work Log:
+- Diagnosis bug LFS via pengujian API langsung: Contents API SATU FILE melaporkan "size" = ukuran ASLI objek LFS (mis. 104857600), bukan ukuran pointer ±137 B seperti daftar folder / git trees. Deteksi lama `size in 120..160` di fetchFileMeta gagal → isLfs=false → downloadFile jatuh ke cabang "file kecil" dan MENYIMPAN TEKS POINTER sebagai file (file rusak ±137 B).
+- GitHubApi.kt: (1) fetchFileMeta kini mendeteksi pointer dari ISI blob (murah — isi hanya dikirim utk file <1 MB, pointer selalu kecil); (2) downloadFile deteksi pointer 3 lapis (isLfs / isi kecil / blob kecil tanpa isi); (3) resolveLfsPointers +parameter maxProbes (layar 120, ZIP 400) supaya folder berisi banyak file kecil 120–160 B tidak mendorong pointer keluar daftar; (4) zipBlobs pakai maxProbes 400.
+- TES END-TO-END (curl/python, repo anztdree/ubl-s23): TWRP_S665L.img (100 MB) → meta (size 104857600 + pointer) → deteksi isi → batch LFS (Basic auth) → URL presigned → unduh utuh 104.857.600 byte. ✅
+- Rombak UI (Kotlin Compose): Theme.kt — palet lebih dalam (bg #0A0E14, surface #10161D), GreenGlow/PinkAccent, GreenGradient, skema warna diperkaya (surfaceBright/Dim, outline baru). Common.kt — komponen baru: HeroPanel (gradien hijau + lingkaran dekoratif), GpCard, SearchField (pil membulat), ActionTile, SkeletonRows (skeleton berdenyut), LfsTag, VisibilityChip.
+- HomeScreen: hero sapaan pengguna (avatar + nama + @login) + ringkasan penyimpanan 2 GB (bar progres gradien, chip publik/privat), LazyColumn single-col, search pil + filter chip, kartu repo baru (garis aksen gradien atas — hijau publik/kuning privat, ikon folder gradien, VisibilityChip, dot bahasa, star, ukuran LFS-aware, waktu update), skeleton loading, FAB "+ Repo Baru".
+- RepoScreen: RepoOverviewCard → hero gradien (ikon kaca, nama + chip visibilitas, bahasa, deskripsi, 5 statistik putih, 4 aksi cepat kaca: Star/Fork/Pantau/ZIP — aktif menyala kuning); FileRow → kartu membulat ber-border + tag LFS + waktu commit + panah; breadcrumb tetap.
+- ProfileScreen: kartu profil → hero gradien (avatar ring kaca, nama/bio/perusahaan-lokasi, statistik klikabel pengikut/mengikuti, tombol Gist & Organisasi kaca).
+- AuthScreen: logo gradien + glow radial, 3 tile sorotan fitur, field token membulat, tombol masuk hijau tebal.
+- MainActivity: Splash glow baru; versi tetap "1.0", versionCode 21 → 22.
+- Build: JDK Temurin 21 + Android SDK 36 dipulihkan (sandbox reset); local.properties sdk.dir; BUILD SUCCESSFUL 2x (perbaikan nullable user + import width/background/GreenGlow); APK 4.082.009 B; aapt versionCode 22.
+- Push commit 05d456c via clone bersih /tmp/gp-work. Release v1.0 (id 398661211): aset lama dihapus (204), GitPush-v1.0.apk baru (state uploaded, 4.082.009 B), unduh ulang Accept octet-stream → cmp IDENTIK. README diperbarui (bagian rombak tampilan + perbaikan LFS).
+
+Stage Summary:
+- Bug unduh LFS TUNTAS: file LFS kini terunduh sebagai ISI ASLI (teruji 100 MB utuh), bukan teks pointer; ZIP folder/repo makin tahan (probe 400).
+- Tampilan jauh lebih premium: hero gradien di Beranda/Repo/Profil, kartu & baris file modern, skeleton, FAB, layar masuk baru — tanpa dependensi baru (material-icons-extended sudah ada).
+- Artefak: GitPush-v1.0.apk (versionCode 22, 4,08 MB) → Release v1.0 terbarui + cmp identik; commit 05d456c.
