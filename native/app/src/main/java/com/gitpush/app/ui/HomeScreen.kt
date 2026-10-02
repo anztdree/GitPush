@@ -242,8 +242,14 @@ fun HomeScreen() {
                                 }
                             }
                             Spacer(Modifier.height(14.dp))
-                            // Ringkasan penyimpanan: bar progres + statistik ringkas
-                            val ratio = (totalBytes.toFloat() / (2f * 1024 * 1024 * 1024)).coerceIn(0f, 1f)
+                            // Ringkasan penyimpanan. CATATAN: batas 2 GB GitHub berlaku PER
+                            // REPOSITORY, bukan total — angka utama = total SEMUA repo,
+                            // sedangkan bar mengukur repo TERBESAR terhadap batas 2 GB/repo.
+                            val largestRepo = Store.repos.value.maxByOrNull { usageMap[it.fullName] ?: -1L }
+                            val largestUsage = largestRepo?.let { usageMap[it.fullName] } ?: -1L
+                            val largestKnown = largestUsage >= 0L
+                            val largestBytes = if (largestKnown) largestUsage else 0L
+                            val perRepoRatio = (largestBytes.toFloat() / (2f * 1024 * 1024 * 1024)).coerceIn(0f, 1f)
                             Column {
                                 Row(verticalAlignment = Alignment.Bottom) {
                                     Text(
@@ -254,7 +260,7 @@ fun HomeScreen() {
                                     )
                                     Spacer(Modifier.width(6.dp))
                                     Text(
-                                        "terpakai dari 2 GB",
+                                        "terpakai — total semua repo",
                                         color = Color.White.copy(alpha = 0.65f),
                                         fontSize = 11.5.sp,
                                         modifier = Modifier.padding(bottom = 3.dp)
@@ -274,13 +280,22 @@ fun HomeScreen() {
                                 Box(Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(4.dp)).background(Color.White.copy(alpha = 0.18f))) {
                                     Box(
                                         Modifier
-                                            .fillMaxWidth(ratio)
+                                            .fillMaxWidth(perRepoRatio)
                                             .height(7.dp)
                                             .clip(RoundedCornerShape(4.dp))
                                             .background(Brush.horizontalGradient(listOf(Color(0xFF7EE787), Color(0xFF56D364))))
                                     )
                                 }
                                 Spacer(Modifier.height(8.dp))
+                                Text(
+                                    if (largestKnown)
+                                        "Terbesar: ${largestRepo?.name ?: "—"} • ${formatBytes(largestBytes)} dari 2 GB (${(perRepoRatio * 100).toInt()}%)"
+                                    else
+                                        "batas GitHub 2 GB per repository",
+                                    color = Color.White.copy(alpha = 0.75f),
+                                    fontSize = 11.sp
+                                )
+                                Spacer(Modifier.height(6.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Filled.Public, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(12.dp))

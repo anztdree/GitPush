@@ -1954,25 +1954,119 @@ object GitHubApi {
 
     // ---------- Releases ----------
 
+    private fun parseRelease(o: JSONObject): GhRelease {
+        val assets = mutableListOf<GhReleaseAsset>()
+        o.optJSONArray("assets")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val a = arr.getJSONObject(i)
+                assets.add(
+                    GhReleaseAsset(
+                        id = a.optLong("id"),
+                        name = a.optString("name"),
+                        size = a.optLong("size"),
+                        downloadCount = a.optInt("download_count"),
+                        contentType = a.optString("content_type")
+                    )
+                )
+            }
+        }
+        return GhRelease(
+            id = o.optLong("id"),
+            name = o.optString("name").ifEmpty { o.optString("tag_name") },
+            tagName = o.optString("tag_name"),
+            body = if (o.isNull("body")) null else o.optString("body"),
+            publishedAt = o.optString("published_at"),
+            isDraft = o.optBoolean("draft"),
+            isPrerelease = o.optBoolean("prerelease"),
+            authorLogin = o.optJSONObject("author")?.optString("login") ?: "",
+            assets = assets
+        )
+    }
+
     suspend fun fetchReleases(token: String, owner: String, repo: String): List<GhRelease> =
         withContext(Dispatchers.IO) {
             try {
-                val arr = callArray(token, "GET", "/repos/$owner/$repo/releases?per_page=20")
-                (0 until arr.length()).map { i ->
-                    val o = arr.getJSONObject(i)
-                    GhRelease(
-                        name = o.optString("name").ifEmpty { o.optString("tag_name") },
-                        tagName = o.optString("tag_name"),
-                        body = if (o.isNull("body")) null else o.optString("body"),
-                        publishedAt = o.optString("published_at"),
-                        assetCount = o.optJSONArray("assets")?.length() ?: 0,
-                        isPrerelease = o.optBoolean("prerelease")
-                    )
-                }
+                val arr = callArray(token, "GET", "/repos/$owner/$repo/releases?per_page=30")
+                (0 until arr.length()).map { i -> parseRelease(arr.getJSONObject(i)) }
             } catch (e: GhException) {
                 if (e.code == 404) emptyList() else throw e
             }
         }
+
+    /** Perbarui rilis: judul, catatan (Markdown), prarilis, draf. */
+    suspend fun editRelease(
+        token: String, owner: String, repo: String, id: Long,
+        name: String, body: String?, prerelease: Boolean, draft: Boolean
+    ): GhRelease = withContext(Dispatchers.IO) {
+        val payload = JSONObject()
+            .put("name", name.trim())
+            .put("body", body ?: "")
+            .put("prerelease", prerelease)
+            .put("draft", draft)
+        val o = call(token, "PATCH", "/repos/$owner/$repo/releases/$id", payload)
+            ?: throw GhException("Gagal menyimpan rilis")
+        parseRelease(o)
+    }
+
+    /** Buat rilis baru pada tag_name — tag otomatis dibuat di branch target bila belum ada. */
+    suspend fun createRelease(
+        token: String, owner: String, repo: String, tagName: String,
+        name: String, body: String?, prerelease: Boolean, targetBranch: String
+    ): GhRelease = withContext(Dispatchers.IO) {
+        val payload = JSONObject()
+            .put("tag_name", tagName.trim())
+            .put("name", (if (name.isBlank()) tagName else name).trim())
+            .put("body", body ?: "")
+            .put("prerelease", prerelease)
+        if (targetBranch.isNotBlank()) payload.put("target_commitish", targetBranch.trim())
+        val o = call(token, "POST", "/repos/$owner/$repo/releases", payload)
+            ?: throw GhException("Gagal membuat rilis")
+        parseRelease(o)
+    }
+
+    /** Hapus rilis — tag & commit tetap ada di repository. */
+    suspend fun deleteRelease(token: String, owner: String, repo: String, id: Long): Unit =
+        withContext(Dispatchers.IO) {
+            call(token, "DELETE", "/repos/$owner/$repo/releases/$id")
+            Unit
+        }
+
+    /**
+     * Unduh aset rilis (file lampiran) — stream langsung ke Download via endpoint
+     * aset dengan Accept: application/octet-stream (token dipakai utk repo privat;
+     * redirect ke penyimpanan unduhan GitHub ditangani otomatis oleh OkHttp).
+     */
+    suspend fun downloadReleaseAsset(
+        context: Context, token: String, owner: String, repo: String,
+        assetId: Long, fileName: String, totalSize: Long,
+        onProgress: (Long, Long) -> Unit = { _, _ -> }
+    ): String = withContext(Dispatchers.IO) {
+        saveToDownloads(context, fileName, "application/octet-stream") { out ->
+            val b = Request.Builder().url("$API/repos/$owner/$repo/releases/assets/$assetId")
+                .header("Accept", "application/octet-stream")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("User-Agent", "GitPush-Android")
+            if (token.isNotEmpty()) b.header("Authorization", "Bearer $token")
+            http.newCall(b.get().build()).execute().use { r ->
+                if (!r.isSuccessful) throw GhException("Gagal mengunduh aset (HTTP ${r.code})")
+                val src = r.body?.byteStream() ?: throw GhException("Stream aset kosong")
+                val total = if (totalSize > 0) totalSize
+                else r.body?.contentLength()?.takeIf { it > 0 } ?: 0L
+                if (total > 0) onProgress(0, total)
+                src.use { s ->
+                    val buf = ByteArray(64 * 1024)
+                    var copied = 0L
+                    while (true) {
+                        val n = s.read(buf)
+                        if (n < 0) break
+                        out.write(buf, 0, n)
+                        copied += n
+                        if (total > 0) onProgress(copied, total)
+                    }
+                }
+            }
+        }
+    }
 
     // ---------- Pencarian global ----------
 

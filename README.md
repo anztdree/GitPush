@@ -81,9 +81,13 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (tahap stabilisasi — versi terlihat tidak berubah-ubah). Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.1** (versionCode 23). Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
 
 **Rombakan tampilan v-baru:** hero gradien hijau dengan sapaan pengguna + ringkasan penyimpanan 2 GB di Beranda, kartu ringkasan repository bergradien dengan statistik & 4 aksi cepat (star/fork/pantau/ZIP), baris file bergaya kartu modern dengan tag LFS, skeleton loading berdenyut, layar masuk baru dengan sorotan fitur, warna & tema lebih dalam ala GitHub modern, serta tombol "+ Repo Baru" mengapung.
+
+**Rilis lengkap (v1.1):** bagian Releases kini menampilkan catatan rilis sebagai MARKDOWN yang tersusun rapi (judul, daftar, kode, tautan), daftar **aset lampiran lengkap dengan ukuran + jumlah unduhan + tombol unduh** (bisa satu-satu maupun "Unduh semua"), serta tombol **Edit, Hapus, dan Buat rilis** langsung dari aplikasi — edit judul, catatan Markdown, tandai prarilis/draf.
+
+**Ringkasan penyimpanan diperbaiki:** batas 2 GB GitHub berlaku PER REPOSITORY, bukan total — angka besar di Beranda kini benar-benar total semua repo, sedangkan bar progres mengukur repo terbesar terhadap batas 2 GB/repo (ditampilkan namanya + persentase).
 
 **Perbaikan penting unduh Git LFS:** sebelumnya mengunduh file LFS justru menyimpan teks pointer ±137 B (bukan isi aslinya) karena API satu file melaporkan ukuran ASLI, bukan ukuran pointer — deteksi kini memeriksa isi blob, jadi file 100 MB+ terunduh utuh; ZIP folder/repo pun makin tahan (probe pointer hingga 400 file).
 

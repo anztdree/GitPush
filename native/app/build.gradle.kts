@@ -12,8 +12,8 @@ android {
         applicationId = "com.gitpush.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.0"
+        versionCode = 23
+        versionName = "1.1"
     }
 
     buildTypes {

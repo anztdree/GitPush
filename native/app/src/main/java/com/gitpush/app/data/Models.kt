@@ -130,13 +130,24 @@ data class GhComment(
     val createdAt: String
 )
 
+data class GhReleaseAsset(
+    val id: Long,
+    val name: String,
+    val size: Long,
+    val downloadCount: Int,
+    val contentType: String
+)
+
 data class GhRelease(
+    val id: Long,
     val name: String,
     val tagName: String,
     val body: String?,
     val publishedAt: String,
-    val assetCount: Int,
-    val isPrerelease: Boolean
+    val isDraft: Boolean,
+    val isPrerelease: Boolean,
+    val authorLogin: String,
+    val assets: List<GhReleaseAsset> = emptyList()
 )
 
 data class GhEmail(

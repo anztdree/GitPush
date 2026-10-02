@@ -2,6 +2,7 @@ package com.gitpush.app.ui
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -30,6 +31,8 @@ import androidx.compose.material.icons.filled.CallMerge
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Merge
@@ -38,6 +41,7 @@ import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -70,6 +74,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.gitpush.app.data.GhIssue
 import com.gitpush.app.data.GhPull
 import com.gitpush.app.data.GhRelease
+import com.gitpush.app.data.GhReleaseAsset
 import com.gitpush.app.data.GhRepo
 import com.gitpush.app.data.GitHubApi
 import kotlinx.coroutines.Dispatchers
@@ -635,7 +640,7 @@ fun PullsDialog(
 }
 
 // ============================================================
-// ============ RELEASES — daftar rilis repository ============
+// ===== RELEASES — daftar, edit, buat, hapus, unduh aset =====
 // ============================================================
 
 @Composable
@@ -643,31 +648,47 @@ fun ReleasesDialog(
     owner: String, name: String,
     onDismiss: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var list by remember { mutableStateOf<List<GhRelease>?>(null) }
     var err by remember { mutableStateOf<String?>(null) }
+    var editTarget by remember { mutableStateOf<GhRelease?>(null) }
+    var deleteTarget by remember { mutableStateOf<GhRelease?>(null) }
+    var showCreate by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
 
-    LaunchedEffect(Unit) {
-        try {
-            list = withContext(Dispatchers.IO) {
-                GitHubApi.fetchReleases(Store.token.value, owner, name)
+    val load: () -> Unit = {
+        scope.launch {
+            err = null
+            try {
+                list = withContext(Dispatchers.IO) {
+                    GitHubApi.fetchReleases(Store.token.value, owner, name)
+                }
+            } catch (e: Exception) {
+                err = GitHubApi.humanError(e)
             }
-        } catch (e: Exception) {
-            err = GitHubApi.humanError(e)
         }
     }
+    LaunchedEffect(Unit) { load() }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
                 Row(
-                    Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 6.dp, bottom = 2.dp),
+                    Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 6.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Tutup") }
                     Column(Modifier.weight(1f)) {
                         Text("Releases", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                        Text("$owner/$name", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "$owner/$name • ${list?.size ?: "…"} rilis",
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = { showCreate = true }) {
+                        Icon(Icons.Filled.Add, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Buat", color = GreenPrimary, fontWeight = FontWeight.Bold)
                     }
                     IconButton(onClick = {
                         runCatching {
@@ -679,45 +700,25 @@ fun ReleasesDialog(
                 }
                 when {
                     list == null -> Loading()
-                    err != null -> ErrorCard(err!!) { }
-                    list!!.isEmpty() -> EmptyState(
-                        Icons.Filled.Tag,
-                        "Belum ada release",
-                        "Rilis yang dibuat di GitHub akan tampil di sini"
-                    )
+                    err != null -> ErrorCard(err!!) { load() }
+                    list!!.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        EmptyState(
+                            Icons.Filled.Tag,
+                            "Belum ada release",
+                            "Buat rilis pertama lewat tombol Buat, atau rilis dari GitHub akan tampil di sini"
+                        )
+                    }
                     else -> ResponsiveBox {
                         LazyColumn(
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(list!!, key = { it.tagName }) { r ->
-                                androidx.compose.material3.Card {
-                                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Filled.Tag, contentDescription = null, tint = PurpleAccent, modifier = Modifier.size(17.dp))
-                                            Spacer(Modifier.width(8.dp))
-                                            Text(r.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            if (r.isPrerelease) {
-                                                Surface(color = YellowWarn.copy(alpha = 0.18f), shape = RoundedCornerShape(5.dp)) {
-                                                    Text("prarilis", color = YellowWarn, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                                                }
-                                            }
-                                        }
-                                        Spacer(Modifier.height(3.dp))
-                                        Text(
-                                            "${r.tagName} • ${timeAgo(r.publishedAt)} • ${r.assetCount} aset",
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp
-                                        )
-                                        if (!r.body.isNullOrBlank()) {
-                                            Spacer(Modifier.height(8.dp))
-                                            Text(
-                                                r.body!!.take(600),
-                                                fontSize = 12.sp, lineHeight = 17.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
+                            items(list!!, key = { it.id }) { r ->
+                                ReleaseCard(
+                                    release = r, owner = owner, name = name,
+                                    onEdit = { editTarget = r },
+                                    onDelete = { deleteTarget = r }
+                                )
                             }
                         }
                     }
@@ -725,6 +726,432 @@ fun ReleasesDialog(
             }
         }
     }
+
+    editTarget?.let { r ->
+        EditReleaseDialog(
+            release = r, owner = owner, name = name,
+            onDismiss = { editTarget = null },
+            onSaved = { editTarget = null; load() }
+        )
+    }
+    deleteTarget?.let { r ->
+        DeleteReleaseDialog(
+            release = r, owner = owner, name = name,
+            onDismiss = { deleteTarget = null },
+            onDeleted = { deleteTarget = null; load() }
+        )
+    }
+    if (showCreate) {
+        CreateReleaseDialog(
+            owner = owner, name = name,
+            onDismiss = { showCreate = false },
+            onCreated = { showCreate = false; load() }
+        )
+    }
+}
+
+/**
+ * Kartu satu rilis: judul + badge draf/prarilis, meta, catatan Markdown,
+ * daftar aset dengan tombol unduh (bisa sekaligus), aksi edit & hapus.
+ */
+@Composable
+private fun ReleaseCard(
+    release: GhRelease,
+    owner: String,
+    name: String,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val totalAssetBytes = release.assets.sumOf { it.size }
+
+    fun downloadAssets(assets: List<GhReleaseAsset>) {
+        if (assets.isEmpty()) return
+        scope.launch {
+            var ok = 0
+            var lastLoc = ""
+            assets.forEachIndexed { idx, a ->
+                Store.showOp(
+                    if (assets.size > 1) "Mengunduh aset ${idx + 1}/${assets.size}" else "Mengunduh aset rilis",
+                    a.name
+                )
+                try {
+                    lastLoc = withContext(Dispatchers.IO) {
+                        GitHubApi.downloadReleaseAsset(
+                            ctx, Store.token.value, owner, name, a.id, a.name, a.size,
+                            onProgress = { done, total -> Store.opProgress(done, total) }
+                        )
+                    }
+                    Store.log("download", "Download ${a.name}", "$owner/$name")
+                    ok++
+                } catch (e: Exception) {
+                    Toast.makeText(ctx, "Gagal: ${a.name} — ${GitHubApi.humanError(e)}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            Store.hideOp()
+            if (ok == 1 && assets.size == 1) Toast.makeText(ctx, "Tersimpan: $lastLoc", Toast.LENGTH_SHORT).show()
+            else if (ok > 1) Toast.makeText(ctx, "$ok aset tersimpan di Download/GitPush", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    GpCard(padding = 14.dp) {
+        // ---- Judul + badge draf/prarilis ----
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Tag, contentDescription = null, tint = PurpleAccent, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                release.name, fontWeight = FontWeight.Bold, fontSize = 14.sp,
+                modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            if (release.isDraft) {
+                Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(5.dp)) {
+                    Text("draf", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+                Spacer(Modifier.width(6.dp))
+            }
+            if (release.isPrerelease) {
+                Surface(color = YellowWarn.copy(alpha = 0.18f), shape = RoundedCornerShape(5.dp)) {
+                    Text("prarilis", color = YellowWarn, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                }
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            buildString {
+                append(release.tagName)
+                if (release.publishedAt.isNotBlank()) append(" • ${timeAgo(release.publishedAt)}")
+                if (release.authorLogin.isNotBlank()) append(" • oleh ${release.authorLogin}")
+            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp
+        )
+        // ---- Catatan rilis: dirender MARKDOWN, bukan teks mentah ----
+        if (!release.body.isNullOrBlank()) {
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+            Spacer(Modifier.height(10.dp))
+            val md = release.body!!
+            if (md.length > 6000) {
+                MarkdownText(md.take(6000))
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "… catatan terpotong — buka di GitHub untuk teks lengkap",
+                    color = GrayMuted, fontSize = 11.sp,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
+            } else {
+                MarkdownText(md)
+            }
+        }
+        // ---- Aset rilis: nama, ukuran, jumlah unduhan, tombol unduh ----
+        if (release.assets.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Aset (${release.assets.size}) • ${formatBytes(totalAssetBytes)}",
+                fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = PurpleAccent
+            )
+            Spacer(Modifier.height(4.dp))
+            release.assets.forEach { a ->
+                val (icon, tint) = fileInfo(a.name, false)
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            a.name, fontSize = 12.5.sp, fontWeight = FontWeight.Medium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "${formatBytes(a.size)} • ${a.downloadCount}x diunduh",
+                            fontSize = 10.5.sp, color = GrayMuted
+                        )
+                    }
+                    IconButton(onClick = { downloadAssets(listOf(a)) }, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.Filled.Download, contentDescription = "Unduh ${a.name}", tint = GreenPrimary, modifier = Modifier.size(19.dp))
+                    }
+                }
+            }
+        }
+        // ---- Aksi: edit, hapus, unduh semua aset ----
+        Spacer(Modifier.height(6.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onEdit) {
+                Icon(Icons.Filled.Edit, contentDescription = null, tint = BlueAccent, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Edit", fontSize = 12.5.sp, color = BlueAccent, fontWeight = FontWeight.SemiBold)
+            }
+            TextButton(onClick = onDelete) {
+                Icon(Icons.Filled.Delete, contentDescription = null, tint = RedDanger, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Hapus", fontSize = 12.5.sp, color = RedDanger, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.weight(1f))
+            if (release.assets.size > 1) {
+                TextButton(onClick = { downloadAssets(release.assets) }) {
+                    Icon(Icons.Filled.Download, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Unduh semua", fontSize = 12.sp, color = GreenPrimary, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
+/** Baris switch ringkas utk dialog rilis (prarilis/draf). */
+@Composable
+private fun ReleaseSwitchRow(
+    title: String, subtitle: String,
+    checked: Boolean, enabled: Boolean = true,
+    onChange: (Boolean) -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
+    }
+}
+
+/** Dialog edit rilis: judul, catatan Markdown, prarilis, draf. */
+@Composable
+private fun EditReleaseDialog(
+    release: GhRelease,
+    owner: String, name: String,
+    onDismiss: () -> Unit,
+    onSaved: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var title by remember { mutableStateOf(release.name) }
+    var body by remember { mutableStateOf(release.body ?: "") }
+    var prerelease by remember { mutableStateOf(release.isPrerelease) }
+    var draft by remember { mutableStateOf(release.isDraft) }
+    var busy by remember { mutableStateOf(false) }
+    var err by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Edit rilis", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Surface(color = PurpleAccent.copy(alpha = 0.12f), shape = RoundedCornerShape(6.dp)) {
+                    Text(
+                        release.tagName, color = PurpleAccent, fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = title, onValueChange = { title = it },
+                    label = { Text("Judul rilis") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = body, onValueChange = { body = it },
+                    label = { Text("Catatan rilis (Markdown)") },
+                    modifier = Modifier.fillMaxWidth().height(150.dp)
+                )
+                Spacer(Modifier.height(12.dp))
+                ReleaseSwitchRow(
+                    "Tandai sebagai prarilis", "Versi pra-rilis / uji coba",
+                    prerelease, enabled = !busy && !draft
+                ) { prerelease = it }
+                Spacer(Modifier.height(6.dp))
+                ReleaseSwitchRow(
+                    "Simpan sebagai draf", "Draf tidak tampil untuk publik",
+                    draft, enabled = !busy
+                ) { draft = it; if (it) prerelease = false }
+                if (err != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(err!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !busy && title.isNotBlank(),
+                onClick = {
+                    scope.launch {
+                        busy = true; err = null
+                        try {
+                            withContext(Dispatchers.IO) {
+                                GitHubApi.editRelease(
+                                    Store.token.value, owner, name, release.id,
+                                    title, body.trim(), prerelease, draft
+                                )
+                            }
+                            onSaved()
+                        } catch (e: Exception) {
+                            err = GitHubApi.humanError(e)
+                            busy = false
+                        }
+                    }
+                }
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Menyimpan…")
+                } else Text("Simpan")
+            }
+        },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Batal") } }
+    )
+}
+
+/** Dialog buat rilis baru: tag (otomatis dibuat bila belum ada), judul, catatan, prarilis. */
+@Composable
+private fun CreateReleaseDialog(
+    owner: String, name: String,
+    onDismiss: () -> Unit,
+    onCreated: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var tag by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
+    var body by remember { mutableStateOf("") }
+    var prerelease by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var err by remember { mutableStateOf<String?>(null) }
+
+    val tagValid = tag.isNotBlank() && !tag.contains(' ') && !tag.contains("..")
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Buat rilis baru", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "Tag akan dibuat otomatis di branch utama bila belum ada.",
+                    fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = tag, onValueChange = { tag = it },
+                    label = { Text("Nama tag (mis. v1.1)") }, singleLine = true,
+                    isError = tag.isNotEmpty() && !tagValid,
+                    supportingText = {
+                        if (tag.isNotEmpty() && !tagValid) Text("Tag tidak boleh berisi spasi", fontSize = 11.sp)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = title, onValueChange = { title = it },
+                    label = { Text("Judul rilis (opsional)") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = body, onValueChange = { body = it },
+                    label = { Text("Catatan rilis (Markdown)") },
+                    modifier = Modifier.fillMaxWidth().height(130.dp)
+                )
+                Spacer(Modifier.height(12.dp))
+                ReleaseSwitchRow(
+                    "Tandai sebagai prarilis", "Versi pra-rilis / uji coba",
+                    prerelease, enabled = !busy
+                ) { prerelease = it }
+                if (err != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(err!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !busy && tagValid,
+                onClick = {
+                    scope.launch {
+                        busy = true; err = null
+                        try {
+                            withContext(Dispatchers.IO) {
+                                GitHubApi.createRelease(
+                                    Store.token.value, owner, name,
+                                    tag, title, body.trim(), prerelease, ""
+                                )
+                            }
+                            onCreated()
+                        } catch (e: Exception) {
+                            err = GitHubApi.humanError(e)
+                            busy = false
+                        }
+                    }
+                }
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Membuat…")
+                } else Text("Buat rilis")
+            }
+        },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Batal") } }
+    )
+}
+
+/** Konfirmasi hapus rilis (tag & commit tetap ada). */
+@Composable
+private fun DeleteReleaseDialog(
+    release: GhRelease,
+    owner: String, name: String,
+    onDismiss: () -> Unit,
+    onDeleted: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var err by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Hapus rilis?", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        text = {
+            Column {
+                Text(
+                    "Rilis \"${release.name}\" (${release.tagName}) akan dihapus dari GitHub.",
+                    fontSize = 13.sp
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Catatan: tag dan commit tidak ikut terhapus.",
+                    fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (err != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(err!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !busy,
+                colors = ButtonDefaults.buttonColors(containerColor = RedDanger),
+                onClick = {
+                    scope.launch {
+                        busy = true; err = null
+                        try {
+                            withContext(Dispatchers.IO) {
+                                GitHubApi.deleteRelease(Store.token.value, owner, name, release.id)
+                            }
+                            onDeleted()
+                        } catch (e: Exception) {
+                            err = GitHubApi.humanError(e)
+                            busy = false
+                        }
+                    }
+                }
+            ) { Text(if (busy) "Menghapus…" else "Hapus") }
+        },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Batal") } }
+    )
 }
 
 // ============================================================

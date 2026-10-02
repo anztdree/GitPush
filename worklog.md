@@ -148,3 +148,23 @@ Stage Summary:
 - Bug unduh LFS TUNTAS: file LFS kini terunduh sebagai ISI ASLI (teruji 100 MB utuh), bukan teks pointer; ZIP folder/repo makin tahan (probe 400).
 - Tampilan jauh lebih premium: hero gradien di Beranda/Repo/Profil, kartu & baris file modern, skeleton, FAB, layar masuk baru — tanpa dependensi baru (material-icons-extended sudah ada).
 - Artefak: GitPush-v1.0.apk (versionCode 22, 4,08 MB) → Release v1.0 terbarui + cmp identik; commit 05d456c.
+
+---
+Task ID: 2
+Agent: Z.ai Code (main)
+Task: (1) "2 GB adalah size per repository, bukan size total"; (2) rilis: teks mentah + aset unduh tidak ada + bisa edit rilis
+
+Work Log:
+- HomeScreen: ringkasan penyimpanan diperbaiki — angka besar = TOTAL semua repo (caption "terpakai — total semua repo"); bar progres kini mengukur repo TERBESAR vs batas 2 GB PER REPOSITORY, dengan label "Terbesar: {nama} • {ukuran} dari 2 GB ({pct}%)". KuotaBar di RepoScreen/UploadScreen sudah konteks per-repo (tidak diubah).
+- Models.kt: GhRelease diperkaya (id, isDraft, authorLogin, assets: List<GhReleaseAsset>) + data class GhReleaseAsset (id, name, size, downloadCount, contentType).
+- GitHubApi.kt: parseRelease utuh (aset + draf + author); fungsi baru editRelease (PATCH), createRelease (POST — tag otomatis dibuat bila belum ada), deleteRelease (DELETE), downloadReleaseAsset (stream endpoint aset Accept: application/octet-stream → saveToDownloads, progres byte nyata; redirect ke penyimpanan unduhan GitHub ditangani OkHttp).
+- RepoExtra.kt — ReleasesDialog dirombak total: header + tombol Buat + buka di GitHub; kartu rilis = GpCard dengan badge draf/prarilis, meta (tag • waktu • author), catatan dirender MARKDOWN (MarkdownText — bukan teks mentah; potong 6.000 chr utk performa), daftar ASET lengkap (ikon tipe file, ukuran, jumlah unduhan, tombol unduh per aset + "Unduh semua" berurutan dengan dialog progres global), aksi Edit/Hapus per rilis.
+- Dialog baru: EditReleaseDialog (judul, catatan Markdown, switch prarilis & draf), CreateReleaseDialog (tag + validasi spasi, judul, catatan, prarilis), DeleteReleaseDialog (konfirmasi, tombol merah).
+- Verifikasi API langsung (curl): GET releases ✓ (v1.0 id 398661211, aset GitPush-v1.0.apk 4.082.009 B), unduh aset Accept octet-stream → magic bytes "PK" = APK asli ✓.
+- Build: JDK 21 (sandbox reset → install ulang via Adoptium tarball), BUILD SUCCESSFUL, versionCode 23, versionName 1.1, APK 4.114.777 B.
+- Push commit + buat Release v1.1 (tag v1.1) dengan GitPush-v1.1.apk + changelog.
+
+Stage Summary:
+- Kuota 2 GB kini ditampilkan dengan benar (total vs per-repo dipisah jelas di hero).
+- Releases: catatan markdown rapi, aset bisa diunduh (per file / semua), rilis bisa edit/hapus/buat dari dalam aplikasi.
+- Artefak: GitPush-v1.1.apk (versionCode 23) di Release v1.1.
