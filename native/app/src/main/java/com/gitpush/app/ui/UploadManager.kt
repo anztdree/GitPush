@@ -76,6 +76,20 @@ object UploadManager {
     var speedBps by mutableStateOf(0L); private set
     var elapsedMs by mutableStateOf(0L); private set
 
+    /** File yang GAGAL diunggah — TERSIMPAN agar bisa dicoba ulang kapan saja
+     *  (permintaan user: "file gagal jangan hilang, ada try again khusus untuk
+     *  file ini dan akan ikut bersama teman file yang sudah di-upload").
+     *  Kosong = semua file sudah masuk commit. */
+    var failedFiles by mutableStateOf(listOf<PickedFile>()); private set
+
+    /** Parameter run terakhir — dipakai retryFailed() mengulang dengan konteks sama. */
+    private data class RunParams(
+        val token: String, val owner: String, val repo: String, val repoFull: String,
+        val branch: String, val message: String,
+        val resolver: android.content.ContentResolver?, val context: Context?
+    )
+    private var lastRun: RunParams? = null
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
     private val cancelled = AtomicBoolean(false)
@@ -140,15 +154,36 @@ object UploadManager {
         if (!active) showPanel = false
     }
 
+    /** Coba ulang HANYA file yang gagal (permintaan user): file gagal tetap tersimpan,
+     *  diunggah ulang dalam 1 commit tersendiri, dan otomatis MENYATU dengan file
+     *  yang sudah berhasil — commit baru dibangun di atas commit terakhir sehingga
+     *  path folder-nya sama. Blob yang sebelumnya sudah sampai tidak dikirim dua kali
+     *  (blob GitHub bersifat content-addressed → sha sama langsung diterima). */
+    fun retryFailed() {
+        val run = lastRun ?: return
+        val files = failedFiles
+        if (files.isEmpty() || active) return
+        start(
+            token = run.token, owner = run.owner, repo = run.repo, repoFullName = run.repoFull,
+            branch = run.branch,
+            // path file gagal SUDAH termasuk folder target → jangan berprefix ganda
+            targetFolder = "",
+            files = files, message = run.message, resolver = run.resolver,
+            context = run.context, isRetry = true
+        )
+    }
+
     fun start(
         token: String, owner: String, repo: String, repoFullName: String,
         branch: String, targetFolder: String,
         files: List<PickedFile>, message: String,
         resolver: android.content.ContentResolver?,
-        context: Context? = null
+        context: Context? = null,
+        isRetry: Boolean = false
     ) {
         if (active) return
         cancelled.set(false)
+        lastRun = RunParams(token, owner, repo, repoFullName, branch, message, resolver, context)
         repoFull = repoFullName
         this.branch = branch
         filesTotal = files.size
@@ -169,6 +204,7 @@ object UploadManager {
         skipped = emptyList()
         commitSha = null
         error = null
+        failedFiles = emptyList()
         stage = "Menyiapkan"
         phase = "prepare"
         active = true
@@ -178,7 +214,10 @@ object UploadManager {
         synchronized(evLock) { events.clear() }
         logLines = emptyList()
         stallSec = 0L
-        logEvent("MULAI: ${files.size} file (${formatBytes(files.sumOf { it.size })}) → $repoFullName@$branch")
+        logEvent(
+            (if (isRetry) "MULAI (COBA ULANG): " else "MULAI: ") +
+                "${files.size} file (${formatBytes(files.sumOf { it.size })}) → $repoFullName@$branch"
+        )
         // Jenis jaringan utk diagnosa (Wi-Fi vs data seluler — perilaku unggahan beda jauh)
         try {
             val appCtx = context?.applicationContext
@@ -218,6 +257,11 @@ object UploadManager {
                     stallSec = (now - lastMove) / 1000
                     elapsedMs = now - started
                 }
+            }
+            // Pindah ke luar try: files2 dipakai juga di blok catch (set failedFiles)
+            val target = targetFolder.trim().trimStart('/').trimEnd('/')
+            val files2 = if (target.isEmpty()) files else files.map {
+                it.copy(path = "$target/${it.path}")
             }
             try {
                 // Peta path → (sent, total) untuk daftar file aktif
@@ -305,10 +349,6 @@ object UploadManager {
                     onLog = { msg -> logEvent(msg) },
                     isCancelled = { cancelled.get() }
                 )
-                val target = targetFolder.trim().trimStart('/').trimEnd('/')
-                val files2 = if (target.isEmpty()) files else files.map {
-                    it.copy(path = "$target/${it.path}")
-                }
                 val res: UploadResult = withContext(Dispatchers.IO) {
                     GitHubApi.bulkUpload(token, owner, repo, branch, files2, message, resolver, hooks)
                 }
@@ -317,21 +357,32 @@ object UploadManager {
                 skipped = res.skipped
                 filesDone = res.uploaded
                 phase = "done"
+                // File yang masih gagal TERSIMPAN (path sudah termasuk folder target)
+                // — bisa dicoba ulang via retryFailed() dan nanti menyatu di repo yang sama.
+                failedFiles = files2.filter { f -> res.skipped.any { it.first == f.path } }
+                if (failedFiles.isNotEmpty()) {
+                    logEvent("${failedFiles.size} file gagal — tetap tersimpan, bisa dicoba ulang (tombol Coba Lagi)")
+                }
                 logEvent("SELESAI: ${res.uploaded} file masuk commit ${res.commitSha.take(10)} (durasi ${(res.elapsedMs + 999) / 1000} dtk)")
                 GitHubApi.invalidateUsage(owner, repo) // kuota Beranda/Upload dihitung ulang
                 Store.log("upload", "Upload ${res.uploaded} file (1 commit)", repoFullName)
             } catch (e: CancellationException) {
                 elapsedMs = System.currentTimeMillis() - started
                 phase = "cancel"
+                failedFiles = files2 // tidak ada commit — semua file layak dicoba ulang
                 logEvent("DIBATALKAN oleh pengguna")
             } catch (e: Exception) {
                 elapsedMs = System.currentTimeMillis() - started
                 if (cancelled.get()) {
                     phase = "cancel"
+                    failedFiles = files2
                     logEvent("DIBATALKAN oleh pengguna")
                 } else {
                     phase = "error"
                     error = GitHubApi.humanError(e)
+                    // Tidak ada commit yang tercipta → SEMUA file tersimpan utk dicoba ulang.
+                    // Blob yang sudah terunggah tidak akan dikirim dua kali (idempotent).
+                    failedFiles = files2
                     logEvent("ERROR: $error")
                 }
             } finally {

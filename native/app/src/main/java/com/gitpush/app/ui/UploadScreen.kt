@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
@@ -996,7 +997,7 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                 ) {
                     Column(Modifier.padding(10.dp)) {
                         Text(
-                            "⚠ ${skipped.size} file dilewati/gagal:",
+                            "⚠ ${skipped.size} file gagal (tersimpan, bisa dicoba ulang):",
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -1018,6 +1019,35 @@ private fun UploadProgressPanel(onAskCancel: () -> Unit, onOpenCommit: (String) 
                         }
                     }
                 }
+            }
+
+            // ===== TOMBOL COBA LAGI — khusus file yang gagal (file gagal tetap tersimpan;
+            // permintaan user: file yang gagal diulang sendiri lalu menyatu dengan
+            // teman-temannya yang sudah terunggah) =====
+            val retryables = UploadManager.failedFiles
+            if (retryables.isNotEmpty() && !UploadManager.active) {
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { UploadManager.retryFailed() },
+                    colors = ButtonDefaults.buttonColors(containerColor = GreenDeep),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.Replay, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Coba lagi ${retryables.size} file gagal", fontSize = 13.sp)
+                }
+                Text(
+                    if (UploadManager.commitSha != null)
+                        "File gagal tetap tersimpan — diunggah ulang dalam 1 commit dan menyatu " +
+                            "dengan file yang sudah berhasil di repository yang sama."
+                    else
+                        "Belum ada commit yang tercipta — semua file akan diunggah ulang. " +
+                            "Blob yang sudah sampai tidak dikirim dua kali, jadi cepat.",
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
             }
 
             // ===== LOG LANGSUNG — tampil saat proses berjalan (permintaan user:

@@ -81,7 +81,9 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.1** (versionCode 23). Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.1** (versionCode 24). Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Andalkan unggahan (versionCode 24):** akar keluhan "upload sering gagal — 403 lalu commit tak jadi" tuntas dirombak: (1) **pacing global konstan** — semua request pembuat-konten kini berjarak aman ±66 req/menit sejak detik pertama dan jeda itu dibagi rata semua worker (dulu mulai tanpa jeda, lalu longgar sampai nol → burst → 403 berulang); (2) **circuit breaker** — begitu GitHub menghukum 403, SEMUA worker berhenti menghormati masa hukuman (patuh `Retry-After`, 20–120 dtk bertingkat) sehingga blokir tak lagi diperpanjang; (3) **fase commit diperkuat** — ref/tree/commit/ref kini ikut retry sabar 10 percobaan dengan backoff eksponensial s/d 60 dtk (dulu GET polos tanpa retry — satu 403 di detik terakhir membuang seluruh unggahan); (4) **"Coba Lagi" file gagal** — file yang tetap gagal TIDAK hilang: tetap tersimpan, tombol *Coba lagi N file gagal* mengunggahnya ulang dalam 1 commit dan otomatis menyatu dengan file yang sudah berhasil (blob yang sudah sampai tak dikirim dua kali).
 
 **Rombakan tampilan v-baru:** hero gradien hijau dengan sapaan pengguna + ringkasan penyimpanan 2 GB di Beranda, kartu ringkasan repository bergradien dengan statistik & 4 aksi cepat (star/fork/pantau/ZIP), baris file bergaya kartu modern dengan tag LFS, skeleton loading berdenyut, layar masuk baru dengan sorotan fitur, warna & tema lebih dalam ala GitHub modern, serta tombol "+ Repo Baru" mengapung.
 

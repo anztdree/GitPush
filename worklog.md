@@ -168,3 +168,43 @@ Stage Summary:
 - Kuota 2 GB kini ditampilkan dengan benar (total vs per-repo dipisah jelas di hero).
 - Releases: catatan markdown rapi, aset bisa diunduh (per file / semua), rilis bisa edit/hapus/buat dari dalam aplikasi.
 - Artefak: GitPush-v1.1.apk (versionCode 23) di Release v1.1.
+
+---
+Task ID: 25
+Agent: Z.ai Code (main)
+Task: "Upload sering gagal (403) + di akhir tetap failed, tidak ada commit" — andalkan unggahan: pacing global + circuit breaker + fase commit diperkuat + "Coba Lagi" file gagal
+
+Work Log:
+- Diagnosis dari log user: blob 883 B terkirim utuh, respons 403 seketika (diam 0 dtk) = BUKAN masalah jaringan — Secondary Rate Limit GitHub (±80 request konten/menit) karena burst POST blob ribuan file smali kecil.
+- Skenario user: 100 file → 5 gagal skip → loading lanjut → DI AKHIR tetap failed, tidak ada commit. Penyebab: fase commit (refSha GET polos TANPA retry + callRetry cuma 5x/15 dtk) dieksekusi detik-detik setelah gelombang blob memicu jendela hukuman → satu 403 = seluruh upload gagal.
+- Akar osilasi lama: Throttle mulai 0 ms (tanpa jeda), tiap 6 sukses dilonggarkan 25% sampai NOL → burst → 403 → 700 ms → longgar lagi; 700 ms ÷ worker ≈ 85 req/menit masih di atas ambang; retry file cuma 4x (jeda 1-3 dtk) padahal GitHub menyuruh "tunggu beberapa MENIT"; saat satu file kena 403, worker lain terus menembak (memperpanjang hukuman).
+- Throttle dirombak TOTAL: jeda global konstan 900 ms (≈66 req/menit, di bawah ambang) sejak detik pertama, spacing terserialisasi satu kunci (jumlah paralel tak mengubah laju), TIDAK PERNAH turun di bawah lantai; penalize() = jeda naik 2x (maks 60 dtk) + CIRCUIT BREAKER pauseUntil (20→40→80→120 dtk, patuh Retry-After 15-120 dtk) — SEMUA worker berhenti saat hukuman aktif; jitter 0-120 ms anti thundering-herd; sukses beruntun 10x → jeda turun 10% menuju lantai.
+- retryBackoffMs() baru: patuhi Retry-After (1-120 dtk), else eksponensial 1→2→4→8→16→32→60 dtk + jitter.
+- blobCreate: 4 → 10 percobaan maks; callRetry: 5 → 10; 403 "API rate limit exceeded" (limit utama) kini juga retryable (dulu fatal sekali jalan).
+- Fase commit diperkuat: refShaRetry/commitTreeShaRetry baru (callRetry 10x) dipakai untuk base ref di awal + head ref/tree di loop commit — 404/409 tetap lolos → null (jalur repo kosong aman).
+- Fitur baru "Coba Lagi" file gagal (permintaan user): UploadManager.failedFiles menyimpan PickedFile yang gagal (done: subset skip; error/cancel: semua — tidak ada commit); retryFailed() mengulang HANYA file gagal (targetFolder="" karena path sudah berprefix) dalam 1 commit di atas commit terakhir → menyatu otomatis dengan teman-temannya; blob idempotent tak dikirim dua kali.
+- UploadScreen: tombol hijau "Coba lagi N file gagal" (ikon Replay) di panel progres saat !active + keterangan kontekstual (commit sudah ada vs belum); kartu skip diberi judul "tersimpan, bisa dicoba ulang"; log "N file gagal — tetap tersimpan".
+- files2 dipindah keluar try agar catch (error/cancel) bisa set failedFiles.
+- Lingkungan pulih dari reset sandbox: JDK Temurin 21.0.12.1+1 → /home/z/build-restore; cmdline-tools + platform-tools/platforms;android-36/build-tools;36.0.0 → /home/z/android-sdk; local.properties. BUILD SUCCESSFUL pertama tanpa revisi (gradle 8.14.3 diunduh ulang).
+- versionCode 23 → 24 (label tetap 1.1). APK 4.131.161 B (4,13 MB); aapt: versionCode 24, versionName 1.1.
+
+Stage Summary:
+- Upload massal kini andal: pacing aman sejak detik pertama, hukuman 403 dihormati oleh SEMUA worker (tidak diperpanjang), retry sabar 10x di semua tahap termasuk fase commit — 95 blob sukses tidak lagi sia-sia.
+- File gagal tidak pernah hilang: tombol "Coba Lagi" khusus file gagal, 1 commit, menyatu dengan file yang sudah terunggah.
+- Artefak: GitPush-v1.1.apk (versionCode 24, 4,13 MB) → Release v1.1 terbarui.
+
+---
+Task ID: 26
+Agent: Z.ai Code (main)
+Task: Lanjutan Task 25 (sesi berlanjut setelah konteks penuh) — verifikasi ulang seluruh implementasi, build ulang, push ke GitHub, dan perbarui Release v1.1 dengan APK versionCode 24 (user memberi token akses: "silahkan.. anda bisa push ke github saya")
+
+Work Log:
+- Temuan: implementasi Task 25 ternyata sudah LENGKAP dan ter-commit lokal (de46140) sebelum konteks habis — belum ter-push; APK release sudah terbentuk.
+- Tinjau ulang SELURUH diff de46140 file-per-file terhadap rencana yang disetujui user: (1) pacing global konstan 900 ms + jitter 0-120 ms — tak pernah turun di bawah lantai (dulu 0 ms → burst → 403 osilasi); (2) circuit breaker global pauseUntil 20→40→80→120 dtk, patuh Retry-After 15-120 dtk — SEMUA worker berhenti saat hukuman aktif; (3) retry sabar 10x dengan backoff eksponensial 1→2→4→…→60 dtk di callRetry & blobCreate; (4) refShaRetry/commitTreeShaRetry untuk seluruh fase commit (dulu GET polos tanpa retry); (5) fitur "Coba Lagi" file gagal: failedFiles tersimpan, retryFailed() mengunggah ulang hanya file gagal dalam 1 commit di atas commit terakhir (menyatu dengan teman-temannya), tombol hijau + teks penjelasan di panel, versionCode 24, README & worklog Task 25. Semua sesuai rencana — tidak perlu revisi kode.
+- Bersihkan artefak sesi: folder clone nested (mv salah arah ke dalam clone lama) dan build.log basi.
+- Build ulang: BUILD SUCCESSFUL — wajib JAVA_HOME=/home/z/build-restore/jdk-21.0.12.1+1 (java sistem Debian = JRE tanpa javac; error "does not provide JAVA_COMPILER"). aapt: versionCode 24, versionName 1.1; APK 4.131.161 B; unzip -t OK.
+- Push commit ke GitHub user (main) via token; perbarui Release v1.1: catatan rilis ditulis ulang (fokus "andalkan unggahan"), aset GitPush-v1.1.apk lama dihapus lalu unggah ulang yang baru (versionCode 24), unduh ulang diverifikasi identik byte-per-byte.
+
+Stage Summary:
+- origin/main kini memuat commit perbaikan keandalan upload (versionCode 24); Release v1.1 berisi APK terbaru.
+- Keluhan user tuntas di akar: upload massal tidak lagi mengosilasi ke 403, commit tidak bisa batal karena satu 403 di detik terakhir, dan file yang gagal tidak pernah hilang (tombol "Coba Lagi" khusus file gagal yang menyatu dengan file yang sudah terunggah).

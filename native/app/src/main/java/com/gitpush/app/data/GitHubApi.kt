@@ -605,6 +605,36 @@ object GitHubApi {
             o.optJSONObject("tree")?.optString("sha") ?: throw GhException("Tree tidak ditemukan")
         }
 
+    /** refSha DENGAN retry sabar (khusus fase commit bulk upload). Dulu GET polos
+     *  TANPA retry sama sekali: satu 403 saat jendela hukuman aktif = seluruh upload
+     *  gagal di detik terakhir padahal semua blob sudah terunggah (keluhan user:
+     *  "di akhir tetap failed, gak ada commit yang terjadi"). 404/409 (repo/branch
+     *  kosong) tetap lolos tanpa retry → null agar jalur repo kosong tetap jalan. */
+    private suspend fun refShaRetry(
+        token: String, owner: String, repo: String, branch: String,
+        hooks: UploadHooks, throttle: Throttle
+    ): String? = try {
+        val o = callRetry(token, "GET", "/repos/$owner/$repo/git/ref/heads/${Uri.encode(branch)}", null, hooks, throttle)
+        val sha = o?.optJSONObject("object")?.optString("sha")
+        if (sha.isNullOrEmpty()) throw GhException("Branch tidak ditemukan", 404)
+        sha
+    } catch (e: GhException) {
+        if (e.code == 404 || e.code == 409) null else throw e
+    }
+
+    /** commitTreeSha DENGAN retry sabar — alasan sama dengan refShaRetry. */
+    private suspend fun commitTreeShaRetry(
+        token: String, owner: String, repo: String, commitSha: String,
+        hooks: UploadHooks, throttle: Throttle
+    ): String? = try {
+        val o = callRetry(token, "GET", "/repos/$owner/$repo/git/commits/$commitSha", null, hooks, throttle)
+        val tree = o?.optJSONObject("tree")?.optString("sha")
+        if (tree.isNullOrEmpty()) throw GhException("Tree tidak ditemukan")
+        tree
+    } catch (e: GhException) {
+        if (e.code == 404) null else throw e
+    }
+
     suspend fun fetchTreeRecursive(token: String, owner: String, repo: String, treeSha: String): List<TreeNode> =
         withContext(Dispatchers.IO) {
             val o = call(token, "GET", "/repos/$owner/$repo/git/trees/$treeSha?recursive=1")
@@ -779,12 +809,8 @@ object GitHubApi {
         if (files.isEmpty()) throw GhException("Tidak ada file untuk di-commit")
 
         hooks.onStage("Menyiapkan")
-        val baseCommitSha = try {
-            refSha(token, owner, repo, branch)
-        } catch (e: GhException) {
-            if (e.code == 404 || e.code == 409) null else throw e
-        }
-        val baseTreeSha = baseCommitSha?.let { commitTreeSha(token, owner, repo, it) }
+        val baseCommitSha = refShaRetry(token, owner, repo, branch, hooks, throttle)
+        val baseTreeSha = baseCommitSha?.let { commitTreeShaRetry(token, owner, repo, it, hooks, throttle) }
 
         // Rencana: ukuran pasti (probe bila metadata 0) + sha256 utk LFS.
         // DIPARALELKAN (4): ratusan file besar tidak lagi dianalisis satu-per-satu —
@@ -933,12 +959,8 @@ object GitHubApi {
         while (true) {
             attempt++
             hooks.onStage("Membuat commit")
-            val headSha = try {
-                refSha(token, owner, repo, branch)
-            } catch (e: GhException) {
-                if (e.code == 404 || e.code == 409) null else throw e
-            }
-            val headTree = headSha?.let { commitTreeSha(token, owner, repo, it) }
+            val headSha = refShaRetry(token, owner, repo, branch, hooks, throttle)
+            val headTree = headSha?.let { commitTreeShaRetry(token, owner, repo, it, hooks, throttle) }
 
             val treeArr = JSONArray()
             for (i in uploadedIdx) {
@@ -992,38 +1014,84 @@ object GitHubApi {
     private data class Plan(val f: PickedFile, val size: Long, val sha256: String?, val lfs: Boolean)
 
     /**
-     * Throttle adaptif dengan PELURUHAN. Dulu sekali kena limit (403/429) semua request
-     * masuk gerbang 700 ms SELAMANYA → ratusan file terasa super lambat (±1,4 req/s).
-     * Kini setiap 6 keberhasilan berturut-turut jeda dilonggarkan 25% sampai hilang.
+     * Pacing + circuit breaker GLOBAL untuk SEMUA request pembuat-konten
+     * (POST blob/tree/commit/ref) — akar perbaikan "upload sering gagal":
+     *
+     * LAMA (osilasi maut): mulai TANPA jeda → worker menembak serentak → 403
+     * secondary rate limit → jeda 700 ms → tiap 6 sukses dilonggarkan 25% sampai
+     * NOL lagi → burst lagi → 403 lagi — siklus yang terus-menerus memicu hukuman
+     * GitHub, dan file yang kehabisan percobaan di tengah hukuman = gagal permanen.
+     *
+     * KINI:
+     * - Jeda global KONSTAN sejak detik pertama (900 ms ≈ 66 req/menit — di bawah
+     *   ambang ±80 req/menit GitHub), dibagi RATA semua worker: jumlah paralel
+     *   tidak mengubah total laju (spacing terserialisasi di satu kunci).
+     * - Kena 403/429 → jeda global naik 2x (maks 60 dtk) + CIRCUIT BREAKER:
+     *   SEMUA worker berhenti selama masa hukuman (20-120 dtk bertingkat, patuh
+     *   Retry-After GitHub bila ada) — trafik yang terus mengalir saat hukuman
+     *   aktif justru memperpanjang blokir di sisi GitHub.
+     * - Sukses beruntun → jeda turun perlahan menuju lantai 900 ms, TIDAK PERNAH
+     *   di bawahnya. Tidak ada lagi mode "tanpa rem".
      */
     private class Throttle {
-        var minIntervalMs = 0
+        /** Lantai aman permanen: 900 ms antar request konten ≈ 66/menit. */
+        private val floorMs = 900L
+        private var intervalMs = floorMs
         private var lastStart = 0L
         private var okStreak = 0
+        private var penalStreak = 0
+        /** Circuit breaker: jangan mulai request konten sebelum waktu ini. */
+        private var pauseUntil = 0L
 
+        /** Hukuman saat kena 403/429: jeda global naik 2x + semua worker berhenti.
+         *  windowMs > 0 = patuhi Retry-After GitHub; 0 = tunggu bertingkat sendiri
+         *  (20→40→80→120 dtk) karena GitHub menyarankan "tunggu beberapa menit". */
         @Synchronized
-        fun gate() {
-            if (minIntervalMs <= 0) return
-            val now = System.currentTimeMillis()
-            val wait = lastStart + minIntervalMs - now
-            if (wait > 0) try { Thread.sleep(wait) } catch (_: InterruptedException) { }
-            lastStart = System.currentTimeMillis()
+        fun penalize(windowMs: Long) {
+            okStreak = 0
+            intervalMs = (intervalMs * 2).coerceAtMost(60_000)
+            val w = if (windowMs > 0) windowMs.coerceIn(15_000, 120_000) else {
+                penalStreak = (penalStreak + 1).coerceAtMost(3)
+                (20_000L shl (penalStreak - 1)).coerceAtMost(120_000)
+            }
+            val until = System.currentTimeMillis() + w
+            if (until > pauseUntil) pauseUntil = until
         }
 
+        /** Sukses beruntun → pelan-pelan kembali ke lantai aman (tidak di bawahnya). */
         @Synchronized
         fun success() {
             okStreak++
-            if (okStreak >= 6) {
+            if (okStreak >= 10 && intervalMs > floorMs) {
                 okStreak = 0
-                if (minIntervalMs > 0) minIntervalMs = (minIntervalMs * 3) / 4
-                if (minIntervalMs < 100) minIntervalMs = 0
+                penalStreak = 0
+                intervalMs = ((intervalMs * 9) / 10).coerceAtLeast(floorMs)
             }
         }
 
+        /** Gerbang masuk request konten: tunggu circuit breaker + jeda global +
+         *  jitter acak (anti thundering-herd saat semua worker bangun bersamaan).
+         *  Tidur DALAM kunci memang disengaja: spacing antar request terserialisasi
+         *  — total laju tetap aman berapa pun jumlah worker paralel. */
         @Synchronized
-        fun slowDown(ms: Int) {
-            okStreak = 0
-            if (ms > minIntervalMs) minIntervalMs = ms
+        fun gate(isCancelled: () -> Boolean) {
+            while (true) {
+                if (isCancelled()) return
+                val now = System.currentTimeMillis()
+                if (now < pauseUntil) {
+                    try { Thread.sleep((pauseUntil - now).coerceAtMost(2_000)) }
+                    catch (_: InterruptedException) { }
+                    continue
+                }
+                val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 120)
+                val wait = lastStart + intervalMs + jitter - now
+                if (wait > 0) {
+                    try { Thread.sleep(wait) } catch (_: InterruptedException) { }
+                    continue // cek ulang pause — bisa saja hukuman baru ditetapkan saat tidur
+                }
+                lastStart = System.currentTimeMillis()
+                return
+            }
         }
     }
 
@@ -1053,15 +1121,29 @@ object GitHubApi {
         }
     }
 
-    /** call() dengan retry: IOException / 5xx / 429 / 403 limit sekunder. */
+    /** Kurva tunggu retry: patuhi Retry-After GitHub bila ada; selain itu
+     *  eksponensial 1→2→4→8→16→32→60 dtk (+ jitter kecil). Cukup sabar untuk
+     *  melewati jendela hukuman GitHub yang biasanya berlangsung menit-menit. */
+    private fun retryBackoffMs(attemptIndex: Int, retryAfterMs: Long): Long {
+        if (retryAfterMs > 0) return retryAfterMs.coerceIn(1_000, 120_000)
+        val base = 1_000L shl attemptIndex.coerceAtMost(6)
+        return (base + (0..500).random()).coerceAtMost(60_000)
+    }
+
+    /** call() dengan retry SABAR: IOException / 5xx / 429 / 403 limit (sekunder
+     *  ATAU utama "API rate limit exceeded"). Dipakai fase commit (tree/commit/ref)
+     *  — dulu hanya 5 percobaan (±15 dtk) padahal GitHub menyuruh "tunggu beberapa
+     *  MENIT" → satu 403 di detik terakhir membuang seluruh unggahan. Kini 10
+     *  percobaan + backoff eksponensial + circuit breaker global (SEMUA worker
+     *  ikut berhenti saat hukuman aktif — bukan hanya request yang gagal). */
     private suspend fun callRetry(
         token: String, method: String, path: String, body: JSONObject?,
-        hooks: UploadHooks, throttle: Throttle, maxAttempts: Int = 5
+        hooks: UploadHooks, throttle: Throttle, maxAttempts: Int = 10
     ): JSONObject? = withContext(Dispatchers.IO) {
         var last: Exception? = null
         repeat(maxAttempts) { i ->
             if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
-            throttle.gate()
+            throttle.gate(hooks.isCancelled)
             try {
                 val r = call(token, method, path, body)
                 throttle.success()
@@ -1069,14 +1151,17 @@ object GitHubApi {
             } catch (e: GhException) {
                 last = e
                 val secondary = e.code == 403 && (e.retryAfterMs > 0 || (e.message ?: "").contains("secondary", true))
-                val retryable = e.code in 500..599 || e.code == 429 || secondary
+                // 403 "API rate limit exceeded" (limit utama) kini juga dicoba ulang —
+                // dulu dianggap fatal sekali jalan → file gagal permanen mendadak.
+                val rateLimited = e.code == 403 && (e.message ?: "").contains("rate limit", true)
+                val retryable = e.code in 500..599 || e.code == 429 || secondary || rateLimited
                 if (!retryable || i == maxAttempts - 1) throw e
-                if (e.code == 403 || e.code == 429) throttle.slowDown(700)
-                delay(if (e.retryAfterMs > 0) e.retryAfterMs.coerceAtMost(60_000) else 1000L * (1 shl i))
+                if (e.code == 403 || e.code == 429) throttle.penalize(e.retryAfterMs)
+                delay(retryBackoffMs(i, e.retryAfterMs))
             } catch (e: IOException) {
                 last = e
                 if (i == maxAttempts - 1) throw GhException("Koneksi gagal: ${e.message}")
-                delay(1000L * (1 shl i))
+                delay(retryBackoffMs(i, 0))
             }
         }
         throw last ?: GhException("Gagal")
@@ -1206,16 +1291,19 @@ object GitHubApi {
         }
     }
 
-    /** Buat blob via API (JSON base64 streaming) dengan retry + throttle adaptif
-     *  + log LIVE tiap tahap (endpoint, percobaan, byte berjalan, respons). */
+    /** Buat blob via API (JSON base64 streaming) dengan pacing global + retry SABAR
+     *  (10 percobaan, backoff eksponensial s/d 60 dtk, patuh Retry-After) + log LIVE
+     *  tiap tahap (endpoint, percobaan, byte berjalan, respons). Dulu 4 percobaan
+     *  pendek (1-3 dtk) — file yang kena gelombang 403 kehabisan percobaan di tengah
+     *  jendela hukuman = gagal permanen; kini bertahan sampai hukuman lewat. */
     private suspend fun UpCtx.blobCreate(f: PickedFile, onSent: (Long) -> Unit): String =
         withContext(Dispatchers.IO) {
             val nm = f.path.substringAfterLast('/')
-            val maxAttempts = 4
+            val maxAttempts = 10
             var attempt = 0
             while (true) {
                 if (hooks.isCancelled()) throw GhException("Dibatalkan", 499)
-                throttle.gate()
+                throttle.gate(hooks.isCancelled)
                 attempt++
                 hooks.onLog("↥ $nm: api.github.com (blob) — percobaan $attempt/$maxAttempts")
                 var lastLogAt = System.currentTimeMillis()
@@ -1251,12 +1339,14 @@ object GitHubApi {
                     return@withContext sha
                 }
                 val secondary = code == 403 && (ra > 0 || text.contains("secondary", true))
+                // 403 "API rate limit exceeded" (limit utama) kini juga dicoba ulang.
+                val rateLimited = code == 403 && text.contains("rate limit", true)
                 // code == 0: koneksi putus saat mengirim body besar — blob bersifat content-addressed
                 // (idempotent) sehingga aman diulang dari awal.
-                val retryable = code in 500..599 || code == 429 || code == 0 || secondary
+                val retryable = code in 500..599 || code == 429 || code == 0 || secondary || rateLimited
                 if (!retryable || attempt >= maxAttempts) throw GhException("HTTP $code: ${text.take(160)}", code, ra)
-                if (code == 403 || code == 429) throttle.slowDown(700)
-                val wait = if (ra > 0) ra.coerceAtMost(60_000) else 1000L * attempt
+                if (code == 403 || code == 429) throttle.penalize(ra)
+                val wait = retryBackoffMs(attempt - 1, ra)
                 // Pengguna harus tahu proses masih berjalan saat mengulang (dulu diam = terlihat macet)
                 hooks.onRetry(f.path, attempt, maxAttempts, wait, if (code == 0) "koneksi macet — nyambung ulang" else "HTTP $code")
                 delay(wait)
