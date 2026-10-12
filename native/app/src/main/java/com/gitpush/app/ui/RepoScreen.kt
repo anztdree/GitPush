@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -1733,7 +1734,7 @@ private fun RepoOverviewCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        if (isPrivate) Icons.Filled.Lock else Icons.Filled.Folder,
+                        if (isPrivate) Icons.Filled.Lock else Icons.AutoMirrored.Filled.MenuBook,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(23.dp)

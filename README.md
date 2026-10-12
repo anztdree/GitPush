@@ -81,7 +81,9 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 31) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 32) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Ikon repository kini berbeda dari ikon folder (versionCode 32):** sebelumnya kartu repository di Beranda memakai ikon folder yang sama persis dengan folder di dalam repo — dua konsep berbeda terlihat identik. Sekarang **repository = ikon buku terbuka** (gaya GitHub) di tiga tempat: badge kartu repository di Beranda, panel ringkasan di halaman repository, dan ikon aktivitas "repository" di Profil (plus ikon keadaan kosong "Belum ada repository"). Folder & file di dalam repository tetap memakai ikon folder kuning yang lama — sekali pandang langsung terbedakan mana "gudang" dan mana "isinya".
 
 **Unggahan tidak lagi "hampir selesai lalu mengulang dari awal" (versionCode 31):** akar keluhan "progress hampir 100% tapi proses mengulang lagi dengan kecepatan rendah" ditemukan dan dituntaskan di tiga titik:
 - **Pengawas koneksi kini tahu apa yang terjadi**: selama paket dikirim, setiap byte melapor ke watchdog — dan setelah paket terkirim penuh, fase **menunggu server memproses** (index-pack bisa puluhan detik untuk paket besar) memakai batas longgar khusus. Dulu kedua fase ini tidak pernah melapor, sehingga watchdog mengira koneksi mati dan **memutus tepat saat progres hampir 100%** → kirim diulang → jatuh ke jalur lambat.

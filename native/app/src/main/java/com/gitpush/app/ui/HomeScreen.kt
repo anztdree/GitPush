@@ -25,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
@@ -358,7 +359,7 @@ fun HomeScreen() {
                         item(key = "error") { ErrorCard(error!!) { load(true) } }
                     filtered.isEmpty() ->
                         item(key = "empty") { EmptyState(
-                            Icons.Filled.Folder,
+                            Icons.AutoMirrored.Filled.MenuBook,
                             when {
                                 searchMode == SearchMode.GLOBAL && q.length < 2 -> "Ketik minimal 2 huruf"
                                 searchMode == SearchMode.GLOBAL -> "Tidak ditemukan di GitHub"
@@ -522,7 +523,7 @@ private fun RepoCard(
                 )
         )
         Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 12.dp, bottom = 14.dp, end = 4.dp), verticalAlignment = Alignment.Top) {
-            // Badge ikon repo (kubah folder) — identitas file manager
+            // Badge ikon repo (buku) — identitas repository, dibedakan dari ikon folder isi repo
             Box(
                 Modifier.size(44.dp).background(
                     Brush.linearGradient(
@@ -536,7 +537,7 @@ private fun RepoCard(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    if (repo.isPrivate) Icons.Filled.Lock else Icons.Filled.Folder,
+                    if (repo.isPrivate) Icons.Filled.Lock else Icons.AutoMirrored.Filled.MenuBook,
                     contentDescription = if (repo.isPrivate) "Repository privat" else "Repository publik",
                     tint = accent,
                     modifier = Modifier.size(22.dp)
