@@ -279,3 +279,23 @@ Work Log:
 Stage Summary:
 - origin/main = 5c01fb1 (versionCode 28); Release v1.0 final berisi APK build 28 terverifikasi; tag v1.0 = commit sumber terbaru.
 - Desain unggahan kini ala aplikasi cloud sejati: TIDAK ADA lagi layar unggah terpisah — unggah = aksi di folder yang sedang dibuka (FAB "Unggah di sini"), progres berupa chip melayang global di semua layar, daftar folder auto-refresh setelah selesai.
+
+---
+Task ID: 31
+Agent: Z.ai Code (main)
+Task: "nah ini baru bener .. sekarang mari kita kembali ke Masalah upload, desain yg sekarang upload 1 mb atau ratusan file aja terasa lama .. padahal jika via terminal itu sangat cepat. kali ini perlu rencana dulu" → rencana disetujui user ("Ya sepertinya rencana anda bagus, dan juga logger saat upload harus jelas .. tanpa batasan jumlah upload mau itu 500 file kecil atau 150mb per file")
+
+Work Log:
+- DIAGNOSA AKAR: unggahan lama = 1 request REST per file (blob API) dengan jeda global 900 ms anti-403 → 500 file = ±7,5 menit MINIMAL hanya jeda; plus base64 +33% per file. Terminal cepat karena packfile biner + SATU koneksi + tanpa limit REST.
+- PROBE PROTOKOL (probe/push-pack.mjs, lab.mjs, lab2.mjs): implementasi smart-HTTP push (git receive-pack) dibuktikan langsung ke github.com sebelum diport ke Kotlin — push repo kosong "unpack ok" + verifikasi API; kegagalan awal diperbaiki: encoding varint header objek pack (byte kontinuasi salah posisi), parse advertisement (baris ref = SATU oid), dan WAJIB header Cache-Control: no-cache pada info/refs (edge cache GitHub membalas posisi branch basi). Uji final di repo GitPush sendiri via branch sementara zz-probe-29: push buat branch ✓, commit kedua dengan parent (hanya objek baru) ✓, hapus branch via zero-oid push ✓ — tanpa menyentuh main.
+- GitPackPush.kt BARU (data/): sha1 objek lokal (blob/tree/commit), pembangun tree dari listing recursive + file baru (urut gaya git, mode dipertahankan), objek commit (author/committer dari Store.user, tz device), pack writer streaming (Deflater, sha1 trailer, progres per-objek, cancel), GET info/refs (Basic auth, no-cache, parse pkt-line), POST git-receive-pack (chunked, HTTP/1.1 + v4First DNS + StallWatchdog, retry koneksi 3x, parse report-status), verifikasi silang via API ref, rebuild non-fast-forward maks 3x.
+- bulkUpload direstrukturisasi (GitHubApi.kt): TAHAP 1 analisis paralel (ukuran + sha256 LFS + sha1 blob git satu pass lokal); TAHAP 2 cek isi repo — file IDENTIK (path+sha sama) dilewati total (up-to-date ala git), isi SAMA (sha ada di repo, path beda) dirujuk tanpa kirim; TAHAP 3 LFS paralel-1 (pointer masuk pack); TAHAP 4a jalur cepat paket git; 4b fallback otomatis ke jalur API blob lama (dengan dedup tetap berlaku) — alasan peralihan dicatat di log. ctx.reset() untuk progres jujur saat pindah jalur.
+- UploadManager.kt: donePaths anti hitung-ganda (file sama tak dihitung 2x saat jalur gagal di tengah → API); hook onFileUnchanged ("• nama — sudah ada di repo, tidak dikirim ulang"); RINGKASAN AKHIR terbaca: "SELESAI: n/m file masuk commit xxx — baru N · blob API N · LFS N · identik N · gagal N — jalur paket git (1 koneksi) — D dtk (X/dtk)"; authorLogin/authorName dari Store.user.value.
+- BATAS: TIDAK ADA batas jumlah file/ukuran di aplikasi (500 file kecil, 150 MB/file jalan via LFS); batas repo GitHub (2–5 GB) dihormati secara alami, TIDAK ditulis di UI (permintaan user).
+- versionCode 29 (versionName 1.0); README entri 29 ditulis; build SUCCESSFUL (fix: ByteArray.slice→String(buf,off,len), while(true) type-Unit→throw tail, Store.user adalah MutableState → .value); APK 4.473.389 B, sha256 c8913e13cce10dcc…
+- Push origin/main (0fb458e kode + 8ac7c8d gitignore probe); tag v1.0 = HEAD 8ac7c8d; PATCH release 398661211 (draft:false, nama "Versi Final (build 29)", body changelog v29); aset lama 633718694 dihapus → GitPush-v1.0.apk build 29 diunggah; verifikasi unduhan ulang sha256 identik byte-per-byte.
+
+Stage Summary:
+- origin/main = 8ac7c8d (versionCode 29); tag v1.0 = 8ac7c8d; Release v1.0 berisi APK build 29 terverifikasi.
+- Unggahan kini dua jalur otomatis: paket git (setara terminal, 1 koneksi) dicoba dulu → jalur API blob andal sebagai fallback; file identik tidak pernah dikirim ulang; log 4 tahap bernomor + ringkasan akhir; tanpa batas jumlah/ukuran file.
+- Protokol smart-HTTP tervalidasi end-to-end lewat probe (termasuk perangkap edge-cache GitHub & format advertisement satu-oid).
