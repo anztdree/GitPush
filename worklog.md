@@ -425,3 +425,19 @@ Stage Summary:
 - Kosongkan repository: 422 SUDAH DIPERBAKI (orphan + tree kosong bawaan git + force), riwayat commit branch ikut habis, RELEASE tetap hidup — persis permintaan user.
 - Fitur baru: hapus beberapa folder sekaligus dalam satu commit via dialog centang.
 - PELAJARAN BARU: ① POST /git/trees {"tree":[]} SELALU 422 "Invalid tree info" — pakai SHA 4b825dc642cb6eb9a060e54bf8d69288fbee4904; ② pindah ref ke commit orphan WAJIB force:true; ③ sandbox reset → remote URL git harus dipasang token lagi; ④ sandbox build butuh build-tools;35.0.0 & platform-tools — Gradle menginstalnya otomatis dari license yang sudah diterima.
+
+---
+Task ID: 37
+Agent: Z.ai Code (main)
+Task: "mungkin lebih tepatnya hapus beberapa file yg di pilih, baik itu file atau folder" — dialog hapus-massal mencakup FILE + FOLDER, bukan folder saja.
+
+Work Log:
+- GitHubApi: deleteFolders diganti deletePaths(token, owner, repo, branch, paths) — item boleh campur: blob tepat di path (file) DITAMBAH semua blob di bawah prefix "path/" (folder), dikumpulkan di LinkedHashSet (anti dobel, terurut). Satu commit, retry 3x, invalidateUsage. Label commit: "Hapus n item: …".
+- RepoExtra.kt: MultiDeleteDialog kini menampilkan SEMUA item lokasi aktif (bukan filter "dir" saja), pakai fileInfo(nd.name, nd.type=="dir") supaya ikon & warna sama persis dengan daftar file (folder kuning, kode hijau, gambar ungu, dst); selected menyimpan nd.path; import +GhNode, -Folder; daftar heightIn 300dp; teks: "Hapus beberapa item?", "Pilih semua (n)", tombol "Hapus n item", toast "n item dihapus — m file ✓".
+- RepoScreen.kt: menu "Hapus beberapa folder…" → "Hapus beberapa item…" dengan ikon Checklist; import FolderDelete dihapus.
+- versionCode 37→38; README entri v38; build SUCCESSFUL (APK 4.522.557 B, sha256 e791e681…; aapt badging = versionCode 38).
+- Rilis: commit 32803d2 push main; tag -f v1.0 → 32803d2; PATCH {draft:false,tag_name} + PATCH name "Versi Final (build 38)"; aset lama 634957239 DELETE 204; upload id 635001729; unduh ulang octet-stream → sha256 e791e681… IDENTIK.
+
+Stage Summary:
+- origin/main = 32803d2 (versionCode 38); release "Versi Final (build 38)" terverifikasi.
+- Hapus-massal kini benar-benar "pilih beberapa file — baik file atau folder": centang campur, satu commit, ikon per jenis file konsisten.
