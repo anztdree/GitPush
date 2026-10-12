@@ -400,3 +400,28 @@ Stage Summary:
 - origin/main = de29638 (versionCode 36); tag v1.0 = de29638; release "Versi Final (build 36)" + GitPush-v1.0.apk 4.506.173 B terverifikasi sha256.
 - Fitur baru: "Kosongkan repository" di menu titik-tiga repo — semua file hilang dalam 1 commit, riwayat/tag/RELEASE kebal (sesuai tuntutan user: release tetap dipertahankan).
 - PELAJARAN: verifikasi aset release wajib header Accept: application/octet-stream; endpoint aset = releases/assets (jamak).
+
+---
+Task ID: 36
+Agent: Z.ai Code (main)
+Task: Laporan user v36 — "data invalid 422", "riwayat ikut terhapus saja, yg bertahan hanya release", "dan juga bisa hapus beberapa folder".
+
+Work Log:
+- SANDBOX RESET (lagi): repo/PAT/JDK/SDK hilang → diulangi restore standar (clone, PAT ke /home/z/.gp-pat, remote URL dgn token, Temurin JDK 21 /home/z/build-restore/jdk-21, cmdline-tools + platforms;android-36 + build-tools;36.0.0, local.properties).
+- DIAGNOSA 422 (uji langsung ke API GitHub dgn repo scratch anztdree/gp-scratch-36 + release "Rilis uji" tag vtest): POST /git/trees {"tree":[]} → 422 "Invalid tree info" — inilah "data invalid 422" yang dilihat user. POST /git/commits dgn tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 (tree kosong bawaan git) + parents [] (ORPHAN) → 201 OK.
+- PATCH ref ke commit orphan TANPA "force" → ditolak "Update is not a fast forward"; dengan "force":true → OK.
+- Verifikasi efek (scratch): file root = 0, commits main = 1 (hanya commit kosongkan), release vtest tetap ada, zipball tag lama masih 200 (tag menunjuk commit lama yang masih dirujuk ref tag).
+- emptyRepo() DITULIS ULANG: buang POST /git/trees (422), pakai commit orphan + EMPTY_TREE_SHA + PATCH force:true. Komentar tegas: jangan pakai tree[] kosong.
+- Baru: deleteFolders(token,…,paths) — hapus banyak folder (path relatif root) dalam SATU commit (base_tree + entri sha NULL per blob di bawah prefix), retry 3x, invalidateUsage.
+- RepoExtra.kt: EmptyRepoDialog teks diganti (riwayat ikut habis — tinggal 1 commit; RELEASE tetap tersimpan); MultiDeleteDialog baru: daftar folder lokasi aktif (fetchContents filter type "dir"), Checkbox + ikon folder kuning, "Pilih semua (n)", tombol merah "Hapus n folder", heightIn 280dp + scroll.
+- RepoScreen.kt: menu zona merah "Hapus beberapa folder…" (FolderDelete) DI ATAS "Kosongkan repository"; state multiDeleteDialog; wiring onDeleted → folderCache.clear() + openDir(path) + reloadMeta + loadRepoInfo.
+- versionCode 36→37; README entri v37 (422 fix + riwayat ikut habis + hapus multi folder).
+- Build SUCCESSFUL: APK 4.522.557 B, sha256 2dcc4505….
+- Rilis: commit 36c6130 push main (remote URL perlu token: "could not read Username" tanpa auth); tag -f v1.0 → 36c6130; PATCH {draft:false,tag_name} → PATCH name "Versi Final (build 37)"; aset lama 634698124 DELETE 204; APK v37 upload id 634957239; unduh ulang octet-stream → sha256 2dcc4505… IDENTIK.
+- Cleanup: repo scratch gp-scratch-36 di-DELETE.
+
+Stage Summary:
+- origin/main = 36c6130 (versionCode 37); release "Versi Final (build 37)" terverifikasi.
+- Kosongkan repository: 422 SUDAH DIPERBAKI (orphan + tree kosong bawaan git + force), riwayat commit branch ikut habis, RELEASE tetap hidup — persis permintaan user.
+- Fitur baru: hapus beberapa folder sekaligus dalam satu commit via dialog centang.
+- PELAJARAN BARU: ① POST /git/trees {"tree":[]} SELALU 422 "Invalid tree info" — pakai SHA 4b825dc642cb6eb9a060e54bf8d69288fbee4904; ② pindah ref ke commit orphan WAJIB force:true; ③ sandbox reset → remote URL git harus dipasang token lagi; ④ sandbox build butuh build-tools;35.0.0 & platform-tools — Gradle menginstalnya otomatis dari license yang sudah diterima.
