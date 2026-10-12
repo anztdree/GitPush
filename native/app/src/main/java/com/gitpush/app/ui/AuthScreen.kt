@@ -44,7 +44,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -74,28 +73,8 @@ fun AuthScreen() {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(42.dp))
-        // ===== Logo gradien + gloro lembut =====
-        Box(contentAlignment = Alignment.Center) {
-            Box(
-                Modifier.size(118.dp).background(
-                    Brush.radialGradient(listOf(GreenPrimary.copy(alpha = 0.22f), Color.Transparent))
-                )
-            )
-            Box(
-                Modifier.size(92.dp).background(
-                    Brush.linearGradient(listOf(Color(0xFF1F6F33), GreenDeep, GreenGlow)),
-                    RoundedCornerShape(28.dp)
-                ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Filled.Upload,
-                    contentDescription = "Logo GitPush",
-                    tint = Color.White,
-                    modifier = Modifier.size(46.dp)
-                )
-            }
-        }
+        // ===== Logo brand — identik dengan ikon launcher =====
+        BrandLogo(glowSize = 118, logoSize = 92)
         Spacer(Modifier.height(16.dp))
         Text("GitPush", fontWeight = FontWeight.ExtraBold, fontSize = 27.sp, letterSpacing = (-0.6).sp)
         Spacer(Modifier.height(6.dp))

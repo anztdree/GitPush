@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.res.painterResource
+import com.gitpush.app.R
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -278,6 +280,36 @@ fun ResponsiveBox(content: @Composable () -> Unit) {
                 Box(Modifier.fillMaxSize()) { content() }
             }
         }
+    }
+}
+
+// ---------- Logo brand (identik dengan ikon launcher) ----------
+
+/**
+ * Logo GitPush — SELALU dari aset yang sama dengan ikon launcher (logo_gitpush.png
+ * digenerate dari brand/icon-raw.png, sumber yang sama dengan mipmap/ic_launcher).
+ * Dipakai di splash, layar masuk, dan titik branding lain agar tampilan konsisten.
+ */
+@Composable
+fun BrandLogo(
+    modifier: Modifier = Modifier,
+    glowSize: Int = 118,
+    logoSize: Int = 92
+) {
+    Box(contentAlignment = Alignment.Center, modifier = modifier) {
+        // glow lembut di sekeliling logo
+        Box(
+            Modifier
+                .size(glowSize.dp)
+                .background(
+                    Brush.radialGradient(listOf(GreenPrimary.copy(alpha = 0.22f), Color.Transparent))
+                )
+        )
+        Image(
+            painter = painterResource(R.drawable.logo_gitpush),
+            contentDescription = "Logo GitPush",
+            modifier = Modifier.size(logoSize.dp)
+        )
     }
 }
 

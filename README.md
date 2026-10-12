@@ -81,7 +81,9 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 26) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 27) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Logo seragam + folder tujuan ala cloud (versionCode 27):** splash screen, layar masuk, dan semua titik branding kini memakai **logo yang sama persis dengan ikon launcher** (satu aset dari `brand/icon-raw.png`) — bukan lagi ikon generik. Bagian **Upload dirombak total**: text field "Folder tujuan (opsional)" yang diam-diam membuang file ke root DIGANTI **browser folder repository** — kartu tujuan selalu tampil (root atau path terpilih), ketuk untuk membuka pemilih folder dengan breadcrumb, navigasi subfolder, dan opsi **Folder baru** (dibuat otomatis oleh commit upload) — persis seperti aplikasi cloud pada umumnya.
 
 **Rilis final + lampiran sekali jalan (versionCode 26):** saat **membuat rilis** kini bisa langsung **menambahkan file lampiran** — pilih satu/beberapa file di dialog *Buat rilis*; begitu rilis jadi, file diunggah sebagai aset SEKETIKA dengan progres (file gagal dilaporkan, rilis tetap terbuat). Batas penyimpanan repository 2 GB juga **dihapus total**: Beranda, halaman repository, dan Upload kini hanya menampilkan penyimpanan **terpakai** — tanpa bar kuota, persentase, atau blokir unggahan.
 

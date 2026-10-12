@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -31,9 +33,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Folder
@@ -50,6 +54,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -83,6 +88,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.gitpush.app.data.GhBranch
+import com.gitpush.app.data.GhException
+import com.gitpush.app.data.GhNode
 import com.gitpush.app.data.GhRepo
 import com.gitpush.app.data.GitHubApi
 import com.gitpush.app.data.PickedFile
@@ -205,6 +212,7 @@ fun UploadScreen() {
     var branch by remember { mutableStateOf("main") }
     var showBranchMenu by remember { mutableStateOf(false) }
     var folder by remember { mutableStateOf("") }
+    var showFolderPicker by remember { mutableStateOf(false) }
 
     var picked by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
     var msg by remember { mutableStateOf("") }
@@ -271,6 +279,7 @@ fun UploadScreen() {
     LaunchedEffect(selected?.id) {
         val r = selected ?: return@LaunchedEffect
         branch = r.defaultBranch
+        folder = "" // ganti repo → tujuan kembali ke root (dipilih ulang lewat browser folder)
         // Pemakaian riil (termasuk LFS): pakai cache bila ada, lalu hitung ulang segar
         repoUsedBytes = GitHubApi.cachedUsage(r.owner, r.name, r.defaultBranch) ?: 0L
         scope.launch {
@@ -443,14 +452,32 @@ fun UploadScreen() {
                             }
                         }
                         Spacer(Modifier.height(10.dp))
-                        OutlinedTextField(
-                            value = folder,
-                            onValueChange = { folder = it },
-                            label = { Text("Folder tujuan (opsional)") },
-                            placeholder = { Text("contoh: src/lib") },
-                            singleLine = true,
+                        // ===== Folder tujuan ala aplikasi cloud: TIDAK lagi text field bebas
+                        // yang diam-diam masuk root — tujuan SELALU tampil & dipilih lewat
+                        // browser folder repository (permintaan pengguna).
+                        OutlinedButton(
+                            onClick = { showFolderPicker = true },
+                            enabled = !upActive,
                             modifier = Modifier.fillMaxWidth()
-                        )
+                        ) {
+                            Icon(Icons.Filled.FolderOpen, contentDescription = null, modifier = Modifier.size(17.dp), tint = YellowWarn)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Folder tujuan di ${branch}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    if (folder.isBlank()) "root ( / )" else folder,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(Icons.Filled.ChevronRight, contentDescription = "Pilih folder tujuan", tint = GrayMuted)
+                        }
                         Spacer(Modifier.height(10.dp))
                         // Ringkasan penyimpanan terpakai — TANPA batas kuota (permintaan pengguna)
                         Surface(
@@ -700,6 +727,23 @@ fun UploadScreen() {
                 showRepoPicker = false
             }
         )
+    }
+
+    // ===== Browser folder tujuan upload (ala aplikasi cloud) =====
+    if (showFolderPicker) {
+        selected?.let { r ->
+            FolderPickerDialog(
+                owner = r.owner,
+                repo = r.name,
+                branch = branch,
+                initialPath = folder,
+                onDismiss = { showFolderPicker = false },
+                onPick = {
+                    showFolderPicker = false
+                    folder = it
+                }
+            )
+        }
     }
 
     if (confirmCancel) {
@@ -1254,4 +1298,221 @@ private fun RepoPickerDialog(onDismiss: () -> Unit, onPick: (GhRepo) -> Unit, lo
             }
         }
     }
+}
+
+// ==================== BROWSER FOLDER TUJUAN (ala aplikasi cloud) ====================
+
+/**
+ * Pemilih folder tujuan upload — seperti aplikasi cloud pada umumnya:
+ * - Navigasi folder repository di branch terpilih (folder dulu, A→Z).
+ * - Breadcrumb root / a / b — tap untuk lompat ke atas.
+ * - "Folder baru": subfolder boleh belum ada di GitHub — dibuat otomatis
+ *   oleh commit upload (path file menyertakan foldernya).
+ * - Tombol "Pilih folder ini" menetapkan tujuan; root = "/".
+ */
+@Composable
+private fun FolderPickerDialog(
+    owner: String,
+    repo: String,
+    branch: String,
+    initialPath: String,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit
+) {
+    var path by remember { mutableStateOf(initialPath) }
+    var entries by remember { mutableStateOf<List<GhNode>?>(null) } // null = sedang memuat
+    var err by remember { mutableStateOf<String?>(null) }
+    var reload by remember { mutableStateOf(0) }
+    var newMode by remember { mutableStateOf(false) }
+    var newName by remember { mutableStateOf("") }
+    var virtual by remember { mutableStateOf(false) } // true = folder baru yang belum ada di GitHub
+
+    LaunchedEffect(path, reload) {
+        err = null
+        entries = null
+        virtual = false
+        try {
+            entries = withContext(Dispatchers.IO) {
+                GitHubApi.fetchContents(Store.token.value, owner, repo, path, branch)
+            }
+        } catch (e: Exception) {
+            if ((e as? GhException)?.code == 404) {
+                // Folder belum ada (hasil "Folder baru") — diperbolehkan,
+                // akan dibuat otomatis saat commit upload.
+                entries = emptyList()
+                virtual = true
+            } else {
+                err = GitHubApi.humanError(e)
+                entries = emptyList()
+            }
+        }
+    }
+
+    val segments = path.split('/').filter { it.isNotBlank() }
+    val dirs = entries?.filter { it.type == "dir" } ?: emptyList()
+    val nameValid = newName.isNotBlank() && !newName.contains('/') && !newName.contains("..")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text("Folder tujuan", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Text(
+                    "$owner/$repo • $branch",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        text = {
+            Column(Modifier.heightIn(max = 430.dp)) {
+                // ===== Breadcrumb: root / a / b — tap untuk lompat =====
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "root",
+                        color = if (segments.isEmpty()) GreenPrimary else BlueAccent,
+                        fontWeight = if (segments.isEmpty()) FontWeight.Bold else FontWeight.Normal,
+                        fontSize = 12.5.sp,
+                        modifier = Modifier.clickable { path = "" }
+                    )
+                    segments.forEachIndexed { i, seg ->
+                        Text("  /  ", color = GrayMuted, fontSize = 12.5.sp)
+                        Text(
+                            seg,
+                            color = if (i == segments.lastIndex) GreenPrimary else BlueAccent,
+                            fontWeight = if (i == segments.lastIndex) FontWeight.Bold else FontWeight.Normal,
+                            fontSize = 12.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable { path = segments.take(i + 1).joinToString("/") }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+                Spacer(Modifier.height(4.dp))
+                when {
+                    err != null -> {
+                        Spacer(Modifier.height(8.dp))
+                        Text(err!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                        TextButton(onClick = { reload++ }) {
+                            Icon(Icons.Filled.Replay, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Coba lagi", fontSize = 12.sp)
+                        }
+                    }
+                    entries == null -> {
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 18.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(color = GreenPrimary, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text("Memuat folder…", fontSize = 12.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    newMode -> {
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = newName,
+                            onValueChange = { newName = it },
+                            label = { Text("Nama folder baru") },
+                            placeholder = { Text("contoh: foto-liburan") },
+                            singleLine = true,
+                            isError = newName.isNotEmpty() && !nameValid,
+                            supportingText = {
+                                if (newName.isNotEmpty() && !nameValid)
+                                    Text("Tanpa spasi, '/', atau '..'", fontSize = 11.sp)
+                            },
+                            trailingIcon = {
+                                TextButton(
+                                    enabled = nameValid,
+                                    onClick = {
+                                        val child = newName.trim().trim('/')
+                                        path = if (path.isBlank()) child else "$path/$child"
+                                        newMode = false
+                                        newName = ""
+                                    }
+                                ) { Text("Buka", color = GreenPrimary, fontWeight = FontWeight.Bold) }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            "Folder langsung dibuat saat file di-upload ke dalamnya.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                    else -> {
+                        if (virtual) {
+                            Surface(
+                                color = GreenPrimary.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                            ) {
+                                Text(
+                                    "Folder baru — akan dibuat otomatis saat upload",
+                                    color = GreenPrimary,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                                )
+                            }
+                        }
+                        if (dirs.isEmpty()) {
+                            Text(
+                                "Tidak ada subfolder di sini",
+                                color = GrayMuted,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(vertical = 12.dp)
+                            )
+                        } else {
+                            dirs.forEach { d ->
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .clickable { path = d.path }
+                                        .padding(vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Filled.Folder, contentDescription = null, tint = YellowWarn, modifier = Modifier.size(19.dp))
+                                    Spacer(Modifier.width(9.dp))
+                                    Text(
+                                        d.name,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(Icons.Filled.ChevronRight, contentDescription = "Buka ${d.name}", tint = GrayMuted, modifier = Modifier.size(17.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onPick(path) }) {
+                Text(if (path.isBlank()) "Pilih root" else "Pilih folder ini")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { newMode = !newMode }) {
+                Icon(
+                    Icons.Filled.CreateNewFolder,
+                    contentDescription = null,
+                    tint = GreenPrimary,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(if (newMode) "Lihat isi folder" else "Folder baru", fontSize = 12.sp)
+            }
+        }
+    )
 }
