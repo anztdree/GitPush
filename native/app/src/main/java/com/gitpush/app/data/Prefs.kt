@@ -10,12 +10,24 @@ class Prefs(context: Context) {
     private val sp: SharedPreferences =
         context.getSharedPreferences("gitpush", Context.MODE_PRIVATE)
 
+    init {
+        // Light-first (v34): sekali saja, tema bawaan versi lama ("dark") diangkat
+        // ke "light". Setelah migrasi ini, pilihan pengguna di Pengaturan selalu
+        // dihormati dan tidak pernah diganti otomatis lagi.
+        if (!sp.getBoolean("themeMigratedLight", false)) {
+            sp.edit()
+                .putString("themeMode", "light")
+                .putBoolean("themeMigratedLight", true)
+                .apply()
+        }
+    }
+
     var token: String
         get() = sp.getString("token", "") ?: ""
         set(v) = sp.edit().putString("token", v).apply()
 
     var themeMode: String
-        get() = sp.getString("themeMode", "dark") ?: "dark"
+        get() = sp.getString("themeMode", "light") ?: "light"
         set(v) = sp.edit().putString("themeMode", v).apply()
 
     var defaultCommitMsg: String

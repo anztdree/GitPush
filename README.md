@@ -81,7 +81,13 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 33) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 34) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Tema terang kini bawaan & tampil lebih modern (versionCode 34):** aplikasi dirasakan "jadul" karena selama ini berjalan dengan tema gelap sebagai default dan sebagian warna aksen diambil dari palet GitHub versi dark bahkan saat tema terang aktif. Sekarang:
+- **Terang = tema default** — pemasangan baru dan pembaruan ini langsung tampil terang; pilihan "Gelap" dan "Sistem" tetap tersedia di Pengaturan dan kini dihormati penuh (sekali migrasi otomatis mengangkat pengaturan gelap bawaan versi lama ke terang, sekali saja, tanpa pernah mengubah pilihan eksplisit Anda lagi).
+- **Palet aksen ikut tema** — hijau, biru, ungu, kuning, merah, dan abu-abu aksen kini punya padanan versi terang (mis. hijau `#1A7F37`, biru `#0969DA`, abu `#656D76` ala GitHub light) sehingga ikon, bintang, tautan, dan tag selalu kontras dan tidak lagi tampak "pucat" di atas putih; tema gelap memakai palet dark yang sama seperti sebelumnya.
+- **Skema terang dirapikan total** — latar kanvas lembut `#F6F8FA`, kartu putih bersih, garis batas `#D1D9E0`, wadah aksen hijau/biru/ungu/merah yang halus, plus warna inversi — tata letak yang sama terasa jauh lebih segar dan modern.
+- **Bilah status & navigasi ikut tema** — dulu selalu gelap permanen dari tema XML (mode terang terasa setengah jadi); kini ikon bilah dan warnanya menyesuaikan tema aktif secara otomatis, dan layar pembuka (splash) ikut terang.
 
 **Beranda lebih bersih, navigasi folder lebih mudah, dan menu titik-tiga tampil di tempat yang benar (versionCode 33):** tiga perbaikan dari masukan pemakaian nyata:
 - **Chip filter di bawah pencarian Beranda DIHAPUS** — deretan tombol "Repo saya", "Semua GitHub", "Semua", "Publik", "Privat" dinilai hanya menambah kebisingan. Sekarang cukup satu kolom pencarian yang langsung menyaring repository Anda. Pencarian global GitHub tidak hilang: ia kini muncul **secara kontekstual** — hanya saat pencarian lokal tidak menemukan apa pun, muncul satu tombol *"Cari "kata-kata" di seluruh GitHub"*, dan saat mode global aktif ada banner tipis dengan tombol kembali ke repo saya.

@@ -60,7 +60,7 @@ object Store {
     val user = mutableStateOf<GhUser?>(null)
     val tab = mutableStateOf("home")
     val stack = mutableStateListOf<Screen>()
-    val themeMode = mutableStateOf("dark")
+    val themeMode = mutableStateOf("light")
     val defaultMsg = mutableStateOf("")
     val history = mutableStateOf(listOf<HistoryEntry>())
     val unread = mutableStateOf(0)
