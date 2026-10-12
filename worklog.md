@@ -341,3 +341,22 @@ Stage Summary:
 - Beranda: satu kolom pencarian bersih; global search kontekstual tanpa chip permanen.
 - Repo: ".." folder atas selalu paling atas; semua pop-up titik-tiga/branch anchor tepat di bawah tombolnya.
 - PELAJARAN: git tag TIDAK punya -q; kali ini tag dipindah TANPA menghapus ref dulu → release tidak jadi draft (urutan lebih aman dari putaran 32).
+
+---
+Task ID: 34
+Agent: Z.ai Code (main)
+Task: "sentuhan terakhir, saya rasa tema UI dan tata letak kita terlalu jadul, saya ingin fokus pada tema light sebagai defaultnya.."
+
+Work Log:
+- DIAGNOSA "jadul": ① default tema = "dark" (AppStore init + Prefs fallback); ② tema XML hardcoded gelap permanen (windowBackground/statusBar/navigationBar #0D1117, windowLightStatusBar=false) sehingga mode terang pun punya status bar gelap & splash gelap; ③ konstanta aksen global (GreenPrimary/BlueAccent/YellowWarn/GrayMuted/dll) memakai nilai palet GitHub DARK meski tema light aktif → ikon/teks pucat di atas putih.
+- FIX default: Prefs default "light" + migrasi SEKALI (flag themeMigratedLight: tema tersimpan "dark" bawaan versi lama diangkat ke "light"; setelah itu pilihan user di Pengaturan selalu dihormati); AppStore.themeMode init "light".
+- FIX aksen adaptif: konstanta aksen jadi var + applyAccentPalette(dark) dipanggil di AWAL GitPushTheme (sebelum content dirender — pass komposisi yang sama) → light: hijau #1A7F37, biru #0969DA, ungu #8250DF, merah #CF222E, kuning #B08800, abu #656D76 (ala GitHub light); dark tetap palet lama. Tanpa mengubah satu layar pun.
+- FIX skema light: LightColors dirapikan total — kanvas #F6F8FA, kartu putih, outline #D1D9E0/outlineVariant #E4E9EE, container hijau #DCF3E3/biru #DBE9FA/ungu #ECE1FF/merah #FFE5E5, surfaceContainer tiers lengkap, inverse + surfaceTint.
+- FIX bilah sistem: GitPushTheme kini set statusBar/navigationBar color + isAppearanceLightStatusBars/NavigationBars via WindowCompat per tema (dulu gelap permanen dari XML).
+- FIX XML: Theme.GitPush parent Material.Light.NoActionBar, windowBackground/statusBar/navigationBar #F6F8FA (gh_bg_light), windowLightStatusBar=true — splash ikut terang; dark dikoreksi runtime.
+- versionCode 33→34; README entri v34; build SUCCESSFUL (APK 4.506.173 B, sha256 f16c19bc…); commit 8d006b7 push origin/main; tag v1.0 force → 8d006b7 (ref tak dihapus, release tetap published); aset diganti (id 634532352); name "Versi Final (build 34)"; unduh ulang terverifikasi.
+
+Stage Summary:
+- origin/main = 8d006b7 (versionCode 34); release v1.0 = APK build 34 terverifikasi.
+- Light-first: default terang, aksen kontras di kedua tema, bilah sistem & splash ikut tema.
+- HeroPanel & gradien identitas tetap hijau gelap premium — identitas visual tidak berubah.
