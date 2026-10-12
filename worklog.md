@@ -245,3 +245,18 @@ Work Log:
 Stage Summary:
 - origin/main = a4489c1 (versionCode 26, versionName 1.0 final); GitHub kini punya TEPAT SATU release: v1.0 "GitPush v1.0 — Versi Final" dengan APK final terverifikasi byte-per-byte.
 - Buat rilis dari aplikasi kini sekali jalan termasuk lampiran file; seluruh UI bebas batas kuota 2 GB.
+
+---
+Task ID: 29
+Agent: Z.ai Code (main)
+Task: (1) "jangan lupa update source code juga bukan hanya release"; (2) "logo disamakan dengan icon launcher — splash & beberapa titik masih pakai ikon generik"; (3) "upload otomatis masuk ke root itu sangat salah — desain seperti aplikasi cloud pada umumnya"
+
+Work Log:
+- LOGO: aset res/drawable-xxxhdpi/logo_gitpush.png (432px, dari brand/icon-raw.png — sumber yang sama dengan mipmap/ic_launcher). Composable BrandLogo(glowSize, logoSize) baru di Common.kt (glow radial + Image painterResource). Splash (MainActivity) & layar masuk (AuthScreen) diganti dari kotak gradien + Icons.Filled.Upload generik → BrandLogo (identik launcher); import mati dibersihkan.
+- UPLOAD FOLDER TUJUAN: text field "Folder tujuan (opsional)" yang diam-diam membuang file ke root DIHAPUS. Kartu "Folder tujuan di <branch>" selalu tampil path (root ( / ) bila kosong) → membuka FolderPickerDialog BARU: navigasi folder repo via fetchContents per direktori (folder dulu), breadcrumb root/a/b (tap = lompat), "Folder baru" (nama divalidasi tanpa '/'/'..'; folder belum ada diperbolehkan — fetchContents 404 diperlakukan sebagai folder kosong virtual + badge hijau, dibuat otomatis oleh commit upload), tombol "Pilih folder ini"/"Pilih root". Ganti repo → folder di-reset ke root.
+- versionCode 27 (versionName tetap 1.0); README Versi diperbarui (entri versionCode 27); build SUCCESSFUL; aapt versionCode 27; APK 4.378.889 B; sha256 aa984c1e1c93b799…
+- SOURCE CODE selalu di-push bareng release: commit b082575 → origin/main, lalu tag v1.0 dipindah ke commit tsb, PATCH release (draft:false eksplisit — mencegah release jadi draft saat ref tag dihapus) + catatan diperbarui (versiCode 27), aset lama dihapus → GitPush-v1.0.apk baru; unduhan ulang sha256 identik.
+
+Stage Summary:
+- origin/main = b082575 (versionCode 27); Release v1.0 "Versi Final" berisi APK build 27 terverifikasi byte-per-byte; tag v1.0 = commit sumber terbaru.
+- Splash & login kini memakai logo launcher asli; upload punya browser folder tujuan ala cloud dengan path eksplisit + folder baru otomatis.
