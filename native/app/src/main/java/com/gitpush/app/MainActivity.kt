@@ -19,7 +19,6 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,7 +60,7 @@ import com.gitpush.app.ui.RepoScreen
 import com.gitpush.app.ui.Screen
 import com.gitpush.app.ui.SettingsScreen
 import com.gitpush.app.ui.Store
-import com.gitpush.app.ui.UploadScreen
+import com.gitpush.app.ui.UploadTray
 import com.gitpush.app.ui.ViewerScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -166,11 +165,13 @@ fun MainScaffold() {
                 null -> when (tab) {
                     "home" -> HomeScreen()
                     "notifs" -> NotificationsScreen()
-                    "upload" -> UploadScreen()
                     "settings" -> SettingsScreen()
                     else -> ProfileScreen()
                 }
             }
+            // Chip unggahan global (ala aplikasi cloud) — tampil di layar mana pun
+            // saat ada unggahan berjalan / hasilnya belum ditutup. Ketuk → detail.
+            UploadTray(Modifier.align(Alignment.BottomCenter))
             // Dialog progres GLOBAL — semua proses panjang (unduh, ZIP, pindah, hapus, dll)
             // tampil di sini, di atas layar mana pun.
             OperationOverlay()
@@ -211,13 +212,6 @@ private fun BottomBar() {
                 }) { Icon(Icons.Filled.Notifications, contentDescription = "Notifikasi") }
             },
             label = { Text("Notifikasi", fontSize = 11.sp, fontWeight = if (tab == "notifs" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
-        )
-        NavigationBarItem(
-            selected = tab == "upload" && Store.stack.isEmpty(),
-            onClick = { Store.gotoTab("upload") },
-            colors = colors,
-            icon = { Icon(Icons.Filled.Upload, contentDescription = "Unggah") },
-            label = { Text("Unggah", fontSize = 11.sp, fontWeight = if (tab == "upload" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
         )
         NavigationBarItem(
             selected = tab == "settings" && Store.stack.isEmpty(),

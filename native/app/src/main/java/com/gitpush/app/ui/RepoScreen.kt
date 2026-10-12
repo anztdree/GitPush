@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -60,6 +61,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -141,6 +143,7 @@ fun RepoScreen(s: Screen.Repo) {
     var showEditRepo by remember { mutableStateOf(false) }
     var showCreateBranch by remember { mutableStateOf(false) }
     var deleteBranchTarget by remember { mutableStateOf<String?>(null) }
+    var showUploadSheet by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
 
     val loadRepoInfo: () -> Unit = {
@@ -269,6 +272,21 @@ fun RepoScreen(s: Screen.Repo) {
                 realUsage = total
                 // Bagikan hasil ke cache global → kartu Beranda & kuota Upload ikut akurat
                 GitHubApi.putUsageCache(s.owner, s.name, branch, total)
+            }
+        }
+    }
+
+    // Unggahan selesai → daftar folder DISEGARKAN OTOMATIS (upload dimulai dari
+    // FAB layar ini — hasil harus langsung terlihat, tanpa tarik-tarik manual)
+    var seenUpPhase by remember { mutableStateOf(UploadManager.phase) }
+    LaunchedEffect(UploadManager.phase) {
+        val now = UploadManager.phase
+        if (now != seenUpPhase) {
+            seenUpPhase = now
+            if (now == "done" && UploadManager.repoFull == s.fullName) {
+                folderCache.clear()
+                openDir(path)
+                loadRepoInfo()
             }
         }
     }
@@ -428,6 +446,7 @@ fun RepoScreen(s: Screen.Repo) {
 
     // ---- UI ----
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 2.dp),
@@ -696,7 +715,8 @@ fun RepoScreen(s: Screen.Repo) {
                     error != null -> item { ErrorCard(error!!) { openDir(path) } }
                     nodes!!.isEmpty() -> item {
                         Text(
-                            "Repository kosong — buat file dengan tombol + atau unggah massal dari tab Unggah.",
+                            "Repository kosong — ketuk \"Unggah di sini\" untuk mengisi folder ini dari HP, " +
+                                "atau tombol + untuk menulis file baru.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 13.sp,
                             modifier = Modifier.padding(24.dp)
@@ -731,8 +751,21 @@ fun RepoScreen(s: Screen.Repo) {
                         }
                     }
                 }
-                item { Spacer(Modifier.height(24.dp)) }
+                item { Spacer(Modifier.height(88.dp)) } // ruang FAB agar baris terakhir tak tertutup
             }
+        }
+    }
+
+        // ===== FAB unggah ala aplikasi cloud: tujuan = folder yang sedang dibuka =====
+        ExtendedFloatingActionButton(
+            onClick = { showUploadSheet = true },
+            containerColor = GreenDeep,
+            contentColor = Color.White,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+        ) {
+            Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Unggah di sini", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
         }
     }
 
@@ -753,6 +786,24 @@ fun RepoScreen(s: Screen.Repo) {
             branch = branch,
             preloaded = readme,
             onDismiss = { showReadme = false }
+        )
+    }
+
+    // ===== Sheet "Unggah di sini" — desain ala aplikasi cloud: file dari HP masuk
+    // TEPAT di folder yang sedang dibuka (bukan root, bukan layar upload terpisah) =====
+    if (showUploadSheet) {
+        UploadHereSheet(
+            owner = s.owner,
+            repo = s.name,
+            repoFullName = s.fullName,
+            branch = branch,
+            targetPath = path,
+            onDismiss = { showUploadSheet = false },
+            onNewFile = { openEditor(null) },
+            onCreated = {
+                folderCache.clear()
+                openDir(path)
+            }
         )
     }
 
