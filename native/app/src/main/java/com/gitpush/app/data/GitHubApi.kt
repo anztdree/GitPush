@@ -67,6 +67,12 @@ class UploadHooks(
      *  byte berjalan, respons server) — tampil LIVE di panel unggahan supaya pengguna
      *  melihat jelas apa yang sedang terjadi, bukan hanya "Kirim:" lalu diam. */
     val onLog: (String) -> Unit = {},
+    /** BARU v31: file selesai TANPA mengirim byte (isi identik / sudah ada di repo /
+     *  cukup dirujuk) — pembanding bar progres DIKECUALIKAN agar bar jujur mencapai 100%. */
+    val onBytesExempt: (bytesDelta: Long) -> Unit = {},
+    /** BARU v31: pembanding bar DIGANTI total baru (jalur kirim pindah & hanya sisa
+     *  file yang dikirim) — bar mencerminkan pekerjaan yang benar-benar tersisa. */
+    val onBytesTotalReplace: (bytes: Long) -> Unit = {},
     val isCancelled: () -> Boolean = { false }
 )
 
@@ -139,6 +145,13 @@ object GitHubApi {
      *  di jaringan seluler lambat — jangan dibunuh terlalu dini (false-positive). */
     private const val STALL_CONNECT_MS = 20_000L
 
+    /** Diam SETELAH body SELESAI dikirim = server sedang memproses pack (index-pack +
+     *  fsck + update ref — pack besar butuh puluhan detik s/d menit). Fase ini memang
+     *  WAJAR tanpa byte berpindah → batas longgar; readTimeout 10 mnt tetap backstop.
+     *  DULU fase ini memakai batas BODY yang ketat → koneksi dibunuh TEPAT saat paket
+     *  hampir selesai diproses → kirim diulang dari nol → jatuh ke jalur lambat. */
+    private const val STALL_RESPONSE_MS = 180_000L
+
     /** Pengawas koneksi macet DUA TAHAP: loop tulis body melapor tiap progres
      *  (progress()); bila diam melewati batas, Call OkHttp DIBATALKAN (call.cancel())
      *  sehingga tulis yang tertahan langsung melempar IOException → retryable (code 0).
@@ -147,9 +160,14 @@ object GitHubApi {
     internal class StallWatchdog(private val bytesSent: () -> Long = { 0L }) {
         private val last = AtomicLong(System.currentTimeMillis())
         private val armed = AtomicBoolean(false)
+        private val bodyDone = AtomicBoolean(false)
         @Volatile private var call: okhttp3.Call? = null
 
         fun progress() { last.set(System.currentTimeMillis()) }
+
+        /** Body selesai dikirim → fase MENUNGGU RESPONS (server memproses pack);
+         *  batas stall diganti longgar karena fase ini memang wajar tanpa byte. */
+        fun bodyDone() { bodyDone.set(true); progress() }
 
         fun arm(c: okhttp3.Call) {
             call = c
@@ -159,7 +177,11 @@ object GitHubApi {
                 try {
                     while (armed.get()) {
                         val idle = System.currentTimeMillis() - last.get()
-                        val limit = if (bytesSent() > 0L) STALL_BODY_MS else STALL_CONNECT_MS
+                        val limit = when {
+                            bodyDone.get() -> STALL_RESPONSE_MS
+                            bytesSent() > 0L -> STALL_BODY_MS
+                            else -> STALL_CONNECT_MS
+                        }
                         if (idle >= limit) {
                             if (armed.getAndSet(false)) {
                                 try { call?.cancel() } catch (_: Exception) { }
@@ -926,6 +948,7 @@ object GitHubApi {
                     unchangedFlag[i] = true
                     unchangedCount++
                     hooks.onFileUnchanged(files[i].path, planList[i].size)
+                    hooks.onBytesExempt(planList[i].size) // tak pernah dikirim → keluar dr pembanding bar
                 } else if (serverShas.contains(g)) {
                     dupFlag[i] = true
                     dupCount++
@@ -1013,6 +1036,9 @@ object GitHubApi {
 
         // ===== TAHAP 4a — JALUR CEPAT: PAKET GIT (satu koneksi, seperti terminal) =====
         var packTried = false
+        // File yang SUDAH masuk commit pack (dikirim atau cukup dirujuk) — dipakai agar
+        // jalur API lanjutan (file yg sha-nya gagal dihitung) tidak mengirim ulang.
+        val packDone = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
         // File LFS yang GAGAL lalu fallback ke blob isi-penuh TIDAK boleh ikut pack:
         // sha1 yang dihitung untuk LFS adalah sha POINTER-nya, bukan sha isi — tree akan
         // merujuk sha yang salah dan server pasti menolak pack (index-pack failed).
@@ -1020,56 +1046,87 @@ object GitHubApi {
         val hasLfsFallback = files.indices.any { lfsFallback[it] == true && unchangedFlag[it] != true }
         if (baseListing != null && !hasLfsFallback) {
             val lastLocal = ConcurrentHashMap<String, Long>()
-            val entries = ArrayList<GitPackPush.Entry>()
-            val queuedShas = HashSet<String>() // isi identik dalam satu batch → cukup satu objek di pack
-            for (i in files.indices) {
-                if (unchangedFlag[i] == true || lfsFailed[i] == true) continue
-                val f = files[i]
-                val plan = planList[i]
-                when {
-                    // LFS sukses → blob di pack adalah POINTER kecilnya
-                    plan.lfs && pointerBytes[i] != null -> {
-                        val pb = pointerBytes[i]!!
-                        val objSize = pb.size.toLong()
-                        entries.add(GitPackPush.Entry(
-                            f.path, objSize, GitPackPush.blobShaOf(pb), true, bytes = pb,
-                            onSent = packProgress(f.path, objSize, plan.size, ctx, lastLocal, doneOnce, hooks)
-                        ))
-                        viaLfs.incrementAndGet()
-                    }
-                    // isi sama dengan objek lain di repo → cukup dirujuk (tanpa kirim)
-                    dupFlag[i] == true && plan.gitSha1 != null -> {
-                        entries.add(GitPackPush.Entry(f.path, plan.size, plan.gitSha1!!, sendBlob = false))
-                        if (doneOnce.add(f.path)) hooks.onFileDone(f.path, plan.size)
-                        viaPack.incrementAndGet()
-                    }
-                    // file biasa (bukan LFS) dengan sha1 valid
-                    !plan.lfs && plan.gitSha1 != null -> {
-                        if (queuedShas.add(plan.gitSha1!!)) {
+            val warnedSha1 = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
+            // Bangun daftar objek utk pack dari listing TERTENTU — dipakai ulang saat
+            // dibangun ulang setelah gagal (dasar baru; file yang sudah diterima server
+            // otomatis dilewati — pack bersifat content-addressed, persis git).
+            fun buildEntries(listing: List<TreeNode>): List<GitPackPush.Entry> {
+                val serverShasL = HashSet<String>(listing.size * 2 + 8)
+                for (e in listing) serverShasL.add(e.sha)
+                val entries = ArrayList<GitPackPush.Entry>()
+                // Isi identik cukup SATU objek: sha yang sudah ada di server ATAU sudah
+                // masuk antrian batch ini → dirujuk tanpa kirim (persis perilaku git).
+                val queued = HashSet<String>(serverShasL)
+                for (i in files.indices) {
+                    if (unchangedFlag[i] == true || lfsFailed[i] == true) continue
+                    val f = files[i]
+                    val plan = planList[i]
+                    when {
+                        // LFS sukses → blob di pack adalah POINTER kecilnya
+                        plan.lfs && pointerBytes[i] != null -> {
+                            val pb = pointerBytes[i]!!
+                            val sha = GitPackPush.blobShaOf(pb)
+                            val send = queued.add(sha)
                             entries.add(GitPackPush.Entry(
-                                f.path, plan.size, plan.gitSha1!!, true, source = f,
+                                f.path, pb.size.toLong(), sha, send, bytes = pb,
+                                onSent = packProgress(f.path, pb.size.toLong(), plan.size, ctx, lastLocal, doneOnce, hooks)
+                            ))
+                            if (!send && doneOnce.add(f.path)) {
+                                hooks.onFileDone(f.path, plan.size)
+                                hooks.onBytesExempt(plan.size)
+                            }
+                            viaLfs.incrementAndGet()
+                        }
+                        // file biasa (bukan LFS) dengan sha1 valid — isi identik (di server
+                        // atau di batch ini) cukup dirujuk tanpa kirim
+                        !plan.lfs && plan.gitSha1 != null -> {
+                            val send = queued.add(plan.gitSha1!!)
+                            entries.add(GitPackPush.Entry(
+                                f.path, plan.size, plan.gitSha1!!, send, source = f,
                                 onSent = packProgress(f.path, plan.size, plan.size, ctx, lastLocal, doneOnce, hooks)
                             ))
-                        } else {
-                            // isi identik dengan file lain di batch ini → tak perlu objek kedua
-                            entries.add(GitPackPush.Entry(f.path, plan.size, plan.gitSha1!!, sendBlob = false))
-                            if (doneOnce.add(f.path)) hooks.onFileDone(f.path, plan.size)
+                            if (!send && doneOnce.add(f.path)) {
+                                hooks.onFileDone(f.path, plan.size)
+                                hooks.onBytesExempt(plan.size)
+                            }
+                            viaPack.incrementAndGet()
                         }
-                        viaPack.incrementAndGet()
+                        // sha1 gagal dihitung (file tak terbaca saat analisis) → jalur API
+                        else -> if (warnedSha1.add(f.path)) {
+                            hooks.onLog("⚠ ${f.path.substringAfterLast('/')}: isi tidak terbaca saat analisis — file ini akan dikirim via jalur API")
+                        }
                     }
-                    // else: sha1 gagal dihitung → file ditangani jalur API di bawah
                 }
+                return entries
             }
-            if (entries.isNotEmpty()) {
+
+            var packCommit: GitPackPush.Result? = null
+            var curBase = baseCommitSha
+            var curTree = baseTreeSha
+            var curListing: List<TreeNode> = baseListing ?: emptyList()
+            var packAttempt = 0
+            while (packCommit == null) {
+                packAttempt++
+                val entries = buildEntries(curListing)
+                if (entries.isEmpty()) {
+                    hooks.onLog("Tidak ada objek untuk paket — beralih ke jalur API")
+                    break
+                }
                 packTried = true
+                val sendCount = entries.count { it.sendBlob }
                 hooks.onStage("Mengunggah file")
-                hooks.onLog("Jalur cepat: paket git — ${entries.size} file dikirim dalam SATU koneksi (seperti git push di terminal)")
+                if (packAttempt == 1) {
+                    hooks.onLog("Jalur cepat: paket git — ${entries.size} file dalam SATU koneksi ($sendCount dikirim, ${entries.size - sendCount} cukup dirujuk — seperti git push di terminal)")
+                } else {
+                    hooks.onLog("⟳ Paket dibangun ulang (percobaan $packAttempt): dasar baru ${curBase?.take(10) ?: "(repo kosong)"} — $sendCount objek isi perlu dikirim, sisanya sudah diterima server")
+                }
                 try {
-                    val res = GitPackPush.push(
+                    packCommit = GitPackPush.push(
                         GitPackPush.PushArgs(
                             token = token, authUser = authorLogin, owner = owner, repo = repo, branch = branch,
-                            baseCommitSha = baseCommitSha, baseTreeSha = baseTreeSha,
-                            listing = baseListing, entries = entries,
+                            baseCommitSha = curBase, baseTreeSha = curTree,
+                            listing = curListing, entries = entries,
                             message = message, identName = authorName,
                             identEmail = "$authorLogin@users.noreply.github.com",
                             isCancelled = { hooks.isCancelled() },
@@ -1083,23 +1140,102 @@ object GitHubApi {
                             openSource = { pf -> openSource(resolver, pf) }
                         )
                     )
-                    hooks.onStage("Memperbarui branch")
-                    hooks.onLog("── TAHAP 4/4 · COMMIT ──")
-                    hooks.onLog("✓ Commit ${res.commitSha.take(10)} dibuat via paket git → refs/heads/$branch")
-                    return@withContext UploadResult(
-                        res.commitSha, files.size - failed.size, failed.map { it.key to it.value },
-                        System.currentTimeMillis() - started, unchangedCount,
-                        viaPack.get(), 0, viaLfs.get()
-                    )
                 } catch (e: Exception) {
                     if (hooks.isCancelled() || (e is GhException && e.code == 499)) throw GhException("Dibatalkan", 499)
-                    hooks.onLog("⚠ Jalur paket gagal: ${humanError(e)}")
-                    hooks.onLog("→ Beralih ke jalur API (blob satu-per-satu) — tetap andal, hanya lebih lambat…")
-                    // progres byte pack dibuang secara jujur; pengiriman API mulai dari nol lagi
-                    ctx.reset()
-                    lastLocal.clear()
-                    // doneOnce TIDAK dibersihkan — file yang sudah "Selesai" tidak dihitung dua kali
+                    hooks.onLog("✗ Kirim paket gagal (percobaan $packAttempt): ${humanError(e)}")
+                    if (packAttempt >= 2) {
+                        hooks.onLog("→ Melanjutkan via jalur API (blob satu-per-satu) — file yang sudah diterima server TIDAK dikirim ulang…")
+                        break
+                    }
+                    // CEK ULANG ISI REPO — pack itu atomik: bisa jadi SEMUA objek sebenarnya
+                    // sudah diterima (koneksi putus tepat setelah server memproses), atau
+                    // sebagian sudah ada. DULU di titik ini SEMUA file dikirim ulang lewat
+                    // jalur API yang lambat — keluhan user "hampir selesai malah mengulang
+                    // dengan kecepatan rendah". Sekarang: periksa dulu, kirim yang kurang saja.
+                    hooks.onLog("⟳ Memeriksa ulang isi repo — mencari file yang sudah diterima server…")
+                    var checked = false
+                    try {
+                        val freshRef = refShaRetry(token, owner, repo, branch, hooks, throttle)
+                        val ft = freshRef?.let { commitTreeShaRetry(token, owner, repo, it, hooks, throttle) }
+                        if (freshRef != null && ft != null) {
+                            val fl = fetchTreeRecursive(token, owner, repo, ft)
+                            checked = true
+                            val p2s = HashMap<String, String>()
+                            val shaSet = HashSet<String>(fl.size * 2)
+                            for (t in fl) { shaSet.add(t.sha); if (t.type == "blob") p2s[t.path] = t.sha }
+                            var newlyDone = 0
+                            for (i in files.indices) {
+                                if (unchangedFlag[i] == true || lfsFailed[i] == true) continue
+                                val g = planList[i].gitSha1 ?: continue
+                                if (p2s[files[i].path] == g) {
+                                    unchangedFlag[i] = true
+                                    newlyDone++
+                                    if (doneOnce.add(files[i].path)) {
+                                        hooks.onFileUnchanged(files[i].path, planList[i].size)
+                                        hooks.onBytesExempt(planList[i].size)
+                                    }
+                                } else if (shaSet.contains(g) && dupFlag[i] != true) {
+                                    dupFlag[i] = true
+                                }
+                            }
+                            val remaining = files.indices.count { unchangedFlag[it] != true && lfsFailed[it] != true }
+                            if (remaining == 0) {
+                                // Semua file ternyata sudah ada di repo pada commit freshRef —
+                                // pack sebelumnya lengkap diterima server (atau isinya memang
+                                // sudah ada). TIDAK perlu kirim apa pun lagi.
+                                hooks.onLog("✓ Semua file ternyata sudah diterima server — commit ${freshRef.take(10)} sudah berisi semuanya")
+                                return@withContext UploadResult(
+                                    freshRef, files.size - failed.size, failed.map { it.key to it.value },
+                                    System.currentTimeMillis() - started, unchangedFlag.count { it == true },
+                                    viaPack.get(), 0, viaLfs.get()
+                                )
+                            }
+                            hooks.onLog("• $newlyDone file sudah diterima server — $remaining file masih perlu dikirim")
+                            // Bangun ulang di atas posisi TERBARU → hanya objek yang benar-benar
+                            // belum ada yang dikirim ulang
+                            curBase = freshRef
+                            curTree = ft
+                            curListing = fl
+                        }
+                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                        throw GhException("Dibatalkan", 499)
+                    } catch (_: Exception) { }
+                    if (!checked) {
+                        hooks.onLog("→ Tidak bisa memeriksa isi repo — beralih ke jalur API (blob satu-per-satu)…")
+                        break
+                    }
                 }
+            }
+
+            if (packCommit != null) {
+                packDone.addAll(doneOnce)
+                val pending = files.indices.count {
+                    unchangedFlag[it] != true && lfsFailed[it] != true && !packDone.contains(files[it].path)
+                }
+                if (pending == 0) {
+                    hooks.onStage("Memperbarui branch")
+                    hooks.onLog("── TAHAP 4/4 · COMMIT ──")
+                    hooks.onLog("✓ Commit ${packCommit.commitSha.take(10)} dibuat via paket git → refs/heads/$branch")
+                    return@withContext UploadResult(
+                        packCommit.commitSha, files.size - failed.size, failed.map { it.key to it.value },
+                        System.currentTimeMillis() - started, unchangedFlag.count { it == true },
+                        viaPack.get(), 0, viaLfs.get()
+                    )
+                }
+                // File dengan sha1 gagal dihitung masih menunggu — commit pack sudah masuk,
+                // sisanya dikirim jalur API sebagai commit tambahan.
+                hooks.onLog("✓ Commit ${packCommit.commitSha.take(10)} masuk — $pending file tersisa dikirim via jalur API…")
+            }
+            // Jalur paket gagal total → reset progres jujur; pembanding bar diganti dengan
+            // byte file yang BENAR-BENAR masih perlu dikirim (yang sudah ada dilewati).
+            if (packTried && packCommit == null) {
+                ctx.reset()
+                lastLocal.clear()
+                val txBytes = files.indices.filter {
+                    unchangedFlag[it] != true && lfsFailed[it] != true &&
+                        !packDone.contains(files[it].path) && dupFlag[it] != true
+                }.sumOf { planList[it].size }
+                hooks.onBytesTotalReplace(txBytes)
             }
         }
 
@@ -1109,7 +1245,7 @@ object GitHubApi {
         val semMid = Semaphore(3)
         // File kecil dulu (banyak kemenangan cepat → progres terasa hidup), besar terakhir
         val ordered = files.indices.filter {
-            unchangedFlag[it] != true && lfsFailed[it] != true
+            unchangedFlag[it] != true && lfsFailed[it] != true && !packDone.contains(files[it].path)
         }.sortedWith(
             compareBy<Int> { planList[it].lfs }.thenBy { planList[it].size }
         )
@@ -1135,25 +1271,29 @@ object GitHubApi {
                             if (hooks.isCancelled()) throw IOException("Dibatalkan")
                         }
                         try {
+                            var sentAny = false
                             val blobSha: String = when {
                                 // isi sama dengan objek lain di repo → tanpa kirim, rujuk sha-nya
                                 dupFlag[idx] == true && plan.gitSha1 != null -> plan.gitSha1!!
                                 // LFS sukses → pointer dikirim sebagai blob kecil
                                 plan.lfs && pointerBytes[idx] != null -> {
-                                    viaLfs.incrementAndGet()
+                                    viaLfs.incrementAndGet(); sentAny = true
                                     ctx.smallBlob(pointerBytes[idx]!!)
                                 }
                                 // LFS gagal → fallback blob biasa (≤99 MB)
                                 plan.lfs && lfsFallback[idx] == true -> {
-                                    viaBlob.incrementAndGet(); ctx.blobCreate(f, onP)
+                                    viaBlob.incrementAndGet(); sentAny = true; ctx.blobCreate(f, onP)
                                 }
                                 else -> {
-                                    viaBlob.incrementAndGet(); ctx.blobCreate(f, onP)
+                                    viaBlob.incrementAndGet(); sentAny = true; ctx.blobCreate(f, onP)
                                 }
                             }
                             if (blobSha.isEmpty()) throw GhException("SHA blob kosong dari GitHub")
                             shas[idx] = blobSha
-                            if (doneOnce.add(f.path)) hooks.onFileDone(f.path, plan.size)
+                            if (doneOnce.add(f.path)) {
+                                hooks.onFileDone(f.path, plan.size)
+                                if (!sentAny) hooks.onBytesExempt(plan.size) // dirujuk tanpa kirim
+                            }
                         } catch (e: Exception) {
                             val reason = if (e is kotlinx.coroutines.CancellationException) "Dibatalkan" else humanError(e)
                             failed[f.path] = reason
@@ -1232,7 +1372,7 @@ object GitHubApi {
         hooks.onLog("✓ Commit ${commitShaOut.take(10)} dibuat via jalur API → refs/heads/$branch")
         UploadResult(
             commitShaOut, uploadedIdx.size, failed.map { it.key to it.value },
-            System.currentTimeMillis() - started, unchangedCount,
+            System.currentTimeMillis() - started, unchangedFlag.count { it == true },
             viaPack.get(), viaBlob.get(), viaLfs.get()
         )
     }

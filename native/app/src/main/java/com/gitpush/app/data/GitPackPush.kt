@@ -236,15 +236,19 @@ object GitPackPush {
         val md: MessageDigest,
         val counter: AtomicLong,          // total byte pack (lintas percobaan ulang)
         val onPackByte: (Long) -> Unit,
+        val onActivity: () -> Unit,       // laporkan ke watchdog koneksi (SETIAP tulis) —
+                                          // DULU tidak ada laporan → watchdog mengira koneksi
+                                          // mati di detik ke-12 walau data mengalir → push
+                                          // besar selalu terputus menjelang selesai
         val isCancelled: () -> Boolean
     ) {
         private val outBuf = ByteArray(64 * 1024)
 
-        private fun raw(b: ByteArray) { sink.write(b); md.update(b); onPackByte(counter.addAndGet(b.size.toLong())) }
+        private fun raw(b: ByteArray) { sink.write(b); md.update(b); onPackByte(counter.addAndGet(b.size.toLong())); onActivity() }
         private fun raw(b: ByteArray, off: Int, n: Int) {
             if (n <= 0) return
             sink.write(b, off, n); md.update(b, off, n)
-            onPackByte(counter.addAndGet(n.toLong()))
+            onPackByte(counter.addAndGet(n.toLong())); onActivity()
         }
 
         fun header() {
@@ -382,7 +386,16 @@ object GitPackPush {
 
             for (putAttempt in 1..3) {
                 if (args.isCancelled()) throw GhException("Dibatalkan", 499)
+                args.onLog("Mengirim paket (percobaan $putAttempt/3)…")
                 val def = Deflater()
+                // Watchdog dipasang SEBELUM body dan diberi laporan SETIAP byte tertulis;
+                // setelah body selesai ia masuk fase "menunggu respons" dgn batas longgar
+                // (server memproses pack: index-pack + fsck — pack besar butuh waktu, fase
+                // ini memang WAJAR diam). Dulu tidak ada laporan sama sekali → watchdog
+                // membunuh koneksi di detik ke-12 TEPAT saat progres hampir 100% → kirim
+                // diulang dari nol → jatuh ke jalur lambat. Akar "hampir selesai lalu
+                // mengulang dari awal dengan kecepatan rendah" ada di sini.
+                val wd = GitHubApi.StallWatchdog { counter.get() }
                 val body = object : RequestBody() {
                     override fun contentType() = pktMedia
                     override fun contentLength() = -1L // chunked — persis git utk push besar
@@ -390,7 +403,9 @@ object GitPackPush {
                     override fun writeTo(sink: BufferedSink) {
                         sink.write(pktLine("${old} ${commitSha} refs/heads/${args.branch}\u0000report-status agent=git/GitPush-Android"))
                         sink.write(FLUSH)
-                        val w = PackWriter(sink, def, MessageDigest.getInstance("SHA-1"), counter, args.onPackByte, args.isCancelled)
+                        val w = PackWriter(sink, def, MessageDigest.getInstance("SHA-1"), counter,
+                            onPackByte = args.onPackByte, onActivity = { wd.progress() },
+                            isCancelled = args.isCancelled)
                         w.header(); w.count(objCount)
                         for (e in sendBlobEntries) {
                             val ins: InputStream = e.bytes?.let { ByteArrayInputStream(it) }
@@ -408,10 +423,11 @@ object GitPackPush {
                         val ci = ByteArrayInputStream(commit)
                         w.writeObject(1, commit.size.toLong(), { buf -> ci.read(buf) }, { })
                         sink.write(w.md.digest()) // trailer sha1
+                        wd.bodyDone() // body selesai → fase tunggu-respons (batas longgar)
+                        args.onLog("Paket terkirim penuh — menunggu server memproses…")
                     }
                 }
 
-                val wd = GitHubApi.StallWatchdog { counter.get() }
                 val (code, text, ra) = try {
                     val req = Request.Builder()
                         .url("$GIT_HOST/${args.owner}/${args.repo}.git/git-receive-pack")
@@ -479,14 +495,26 @@ object GitPackPush {
             }
 
             if (respOk) {
-                // verifikasi silang via API — push dianggap sukses HANYA jika branch benar-benar menunjuk commit kita
+                args.onLog("✓ Server: unpack ok — refs/heads/${args.branch} diperbarui")
+                // Verifikasi posisi branch lewat PROTOKOL GIT (info/refs — mesin yang sama
+                // dgn push, tidak lewat cache REST) + REST API sebagai cadangan.
+                // PENTING: laporan "unpack ok" + "ok refs/..." SUDAH konfirmasi resmi dari
+                // server git. Verifikasi ini hanya pelengkap — DULU kegagalan verifikasi
+                // (data REST basi / 403 sesaat setelah push besar) membuat unggahan yang
+                // sukses dianggap gagal → SEMUA file dikirim ulang lewat jalur lambat.
                 var verified = false
-                for (v in 1..4) {
-                    val ref = args.fetchRefSha()
-                    if (ref == commitSha) { verified = true; break }
-                    delay(800)
+                for (v in 1..5) {
+                    if (args.isCancelled()) throw GhException("Dibatalkan", 499)
+                    if (advRefSha(auth, args) == commitSha) { verified = true; break }
+                    val api = try { args.fetchRefSha() } catch (_: Exception) { null }
+                    if (api == commitSha) { verified = true; break }
+                    delay(1000)
                 }
-                if (!verified) throw GhException("Paket diterima tapi branch belum terlihat via API — beralih ke jalur API", 0)
+                if (verified) {
+                    args.onLog("✓ Verifikasi: branch ${args.branch} = ${commitSha.take(10)}")
+                } else {
+                    args.onLog("⚠ Verifikasi belum terlihat (replikasi/cache API tertunda) — laporan 'unpack ok' server dianggap sah")
+                }
                 args.onLog("✓ Paket diterima server (${fmt(packBytesAtResp)} terkirim)")
                 return@withContext Result(commitSha, packBytesAtResp, objCount)
             }
@@ -515,6 +543,31 @@ object GitPackPush {
         if (retryAfterMs > 0) return retryAfterMs.coerceIn(1_000, 60_000)
         return (1000L shl attempt.coerceAtMost(4)).coerceAtMost(15_000)
     }
+
+    /** Baca posisi branch via protokol git (GET info/refs — endpoint yang sama dengan
+     *  push sehingga langsung melihat kondisi backend git, tanpa cache REST API).
+     *  null = gagal / branch belum terlihat. Dipakai verifikasi pasca-push. */
+    private fun advRefSha(auth: String, args: PushArgs): String? = try {
+        val req = Request.Builder()
+            .url("$GIT_HOST/${args.owner}/${args.repo}.git/info/refs?service=git-receive-pack")
+            .header("Authorization", auth)
+            .header("User-Agent", "git/GitPush-Android")
+            .header("Accept", "*/*")
+            // WAJIB no-cache — tanpa ini edge cache bisa membalas posisi lama
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
+            .get().build()
+        GitHubApi.httpH1.newCall(req).execute().use { r ->
+            if (!r.isSuccessful) return@use null
+            val body = r.body?.bytes() ?: return@use null
+            var sha: String? = null
+            for (line in parsePkt(body)) {
+                val parts = line.substringBefore('\u0000').split(' ')
+                if (parts.size >= 2 && parts[1] == "refs/heads/${args.branch}" && parts[0].length == 40) sha = parts[0]
+            }
+            sha
+        }
+    } catch (_: Exception) { null }
 
     /** Offset zona waktu device, format git "+0700" / "-0530". */
     private fun tzOffset(): String {

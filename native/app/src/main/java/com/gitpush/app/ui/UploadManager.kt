@@ -299,6 +299,11 @@ object UploadManager {
                         filesTotal = f
                         bytesTotal = b
                     },
+                    // File selesai TANPA kirim byte (identik / cukup dirujuk) → keluar dari
+                    // pembanding bar supaya bar jujur bisa mencapai 100%
+                    onBytesExempt = { d -> bytesTotal = (bytesTotal - d).coerceAtLeast(0L) },
+                    // Jalur kirim pindah & hanya sisa file dikirim → pembanding bar diganti
+                    onBytesTotalReplace = { b -> bytesTotal = b.coerceAtLeast(0L) },
                     onAggregate = { total -> bytesUploaded = total },
                     onHash = { p, read, total ->
                         hashFile = p

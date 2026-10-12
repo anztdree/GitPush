@@ -81,7 +81,12 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 30) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 31) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Unggahan tidak lagi "hampir selesai lalu mengulang dari awal" (versionCode 31):** akar keluhan "progress hampir 100% tapi proses mengulang lagi dengan kecepatan rendah" ditemukan dan dituntaskan di tiga titik:
+- **Pengawas koneksi kini tahu apa yang terjadi**: selama paket dikirim, setiap byte melapor ke watchdog — dan setelah paket terkirim penuh, fase **menunggu server memproses** (index-pack bisa puluhan detik untuk paket besar) memakai batas longgar khusus. Dulu kedua fase ini tidak pernah melapor, sehingga watchdog mengira koneksi mati dan **memutus tepat saat progres hampir 100%** → kirim diulang → jatuh ke jalur lambat.
+- **Laporan server dihormati**: konfirmasi resmi "unpack ok" dari server git kini **final** — verifikasi tambahan lewat protokol git + REST API hanya pelengkap dan tidak pernah membatalkan unggahan yang sudah diterima (dulu data REST yang basi membuat unggahan sukses dianggap gagal).
+- **Lanjut, bukan mengulang**: bila pengiriman paket benar-benar gagal di tengah, aplikasi **memeriksa ulang isi repo dulu** — file yang ternyata sudah diterima server dilewati, dan paket dibangun ulang **hanya untuk yang kurang** (dasar commit terbaru). Jalur API pun sama: file yang sudah ada tidak dikirim ulang, dan pembanding progres diganti agar bar tetap jujur sampai 100%.
 
 **Unggah secepat terminal — paket git (versionCode 30):** keluhan "unggah 1 MB atau ratusan file terasa lama, padahal via terminal sangat cepat" akhirnya dijawab di akar masalahnya. Unggahan kini mencoba **jalur paket git** (protokol smart-HTTP yang sama dipakai `git push` di terminal): **semua file dikirim dalam SATU koneksi** sebagai packfile biner terkompresi zlib — tanpa request per-file, tanpa jeda anti-limit, tanpa base64. Ratusan file kecil selesai dalam hitungan detik, bukan menit. Detail pentingnya:
 - **Deteksi "up-to-date" ala git**: setiap file dihitung sha blob-nya di HP; file yang isinya **sudah ada di repo tidak dikirim ulang sama sekali** (dilewati dengan catatan jelas di log) — unggah ulang folder yang sama nyaris instan.
