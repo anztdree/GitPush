@@ -219,7 +219,7 @@ fun ErrorCard(message: String, onRetry: (() -> Unit)? = null) {
 }
 
 @Composable
-fun EmptyState(icon: ImageVector, title: String, subtitle: String) {
+fun EmptyState(icon: ImageVector, title: String, subtitle: String, action: (@Composable () -> Unit)? = null) {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, contentDescription = null, tint = GrayMuted, modifier = Modifier.size(44.dp))
@@ -233,6 +233,10 @@ fun EmptyState(icon: ImageVector, title: String, subtitle: String) {
                 lineHeight = 19.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
+            if (action != null) {
+                Spacer(Modifier.height(8.dp))
+                action()
+            }
         }
     }
 }

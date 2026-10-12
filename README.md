@@ -81,7 +81,12 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 32) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 33) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Beranda lebih bersih, navigasi folder lebih mudah, dan menu titik-tiga tampil di tempat yang benar (versionCode 33):** tiga perbaikan dari masukan pemakaian nyata:
+- **Chip filter di bawah pencarian Beranda DIHAPUS** — deretan tombol "Repo saya", "Semua GitHub", "Semua", "Publik", "Privat" dinilai hanya menambah kebisingan. Sekarang cukup satu kolom pencarian yang langsung menyaring repository Anda. Pencarian global GitHub tidak hilang: ia kini muncul **secara kontekstual** — hanya saat pencarian lokal tidak menemukan apa pun, muncul satu tombol *"Cari "kata-kata" di seluruh GitHub"*, dan saat mode global aktif ada banner tipis dengan tombol kembali ke repo saya.
+- **Baris ".." (folder atas) di daftar file repository** — membuka folder di dalam repo kini selalu disodori baris pertama berupa ".. — Folder atas" ala file manager klasik; sekali ketuk langsung naik ke folder sebelumnya, tak perlu lagi mengandalkan breadcrumb atau tombol kembali di pojok layar.
+- **Semua pop-up menu titik-tiga kini muncul tepat di bawah tombolnya** — dulu menu repository (pojok kanan atas halaman repo), menu branch, dan menu titik-tiga pada setiap baris file/folder meletakkan pop-up di pojok kiri layar karena popup mengikat ke baris penuh, bukan ke tombolnya. Ketiga menu (plus menu kartu repository di Beranda yang sudah benar) kini ter-anchoring ke tombol masing-masing.
 
 **Ikon repository kini berbeda dari ikon folder (versionCode 32):** sebelumnya kartu repository di Beranda memakai ikon folder yang sama persis dengan folder di dalam repo — dua konsep berbeda terlihat identik. Sekarang **repository = ikon buku terbuka** (gaya GitHub) di tiga tempat: badge kartu repository di Beranda, panel ringkasan di halaman repository, dan ikon aktivitas "repository" di Profil (plus ikon keadaan kosong "Belum ada repository"). Folder & file di dalam repository tetap memakai ikon folder kuning yang lama — sekali pandang langsung terbedakan mana "gudang" dan mana "isinya".
 

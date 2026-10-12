@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CallMerge
@@ -494,10 +495,11 @@ fun RepoScreen(s: Screen.Repo) {
             }) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Segarkan")
             }
-            IconButton(onClick = { showRepoMenu = true }) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "Menu repository")
-            }
-            DropdownMenu(expanded = showRepoMenu, onDismissRequest = { showRepoMenu = false }) {
+            Box {
+                IconButton(onClick = { showRepoMenu = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Menu repository")
+                }
+                DropdownMenu(expanded = showRepoMenu, onDismissRequest = { showRepoMenu = false }) {
                 DropdownMenuItem(
                     text = { Text("Edit repository") },
                     leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(17.dp)) },
@@ -563,6 +565,7 @@ fun RepoScreen(s: Screen.Repo) {
                         deleteRepoDialog = true
                     }
                 )
+                }
             }
         }
 
@@ -592,23 +595,24 @@ fun RepoScreen(s: Screen.Repo) {
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedButton(
-                            onClick = { showBranchMenu = true },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
-                        ) {
-                            Icon(Icons.Filled.AccountTree, contentDescription = null, modifier = Modifier.size(15.dp))
-                            Spacer(Modifier.size(6.dp))
-                            Text(
-                                branch,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                fontSize = 12.sp
-                            )
-                            Spacer(Modifier.weight(1f))
-                            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Pilih branch")
-                        }
-                        DropdownMenu(expanded = showBranchMenu, onDismissRequest = { showBranchMenu = false }) {
+                        Box(Modifier.weight(1f)) {
+                            OutlinedButton(
+                                onClick = { showBranchMenu = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp)
+                            ) {
+                                Icon(Icons.Filled.AccountTree, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.size(6.dp))
+                                Text(
+                                    branch,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    fontSize = 12.sp
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Icon(Icons.Filled.ArrowDropDown, contentDescription = "Pilih branch")
+                            }
+                            DropdownMenu(expanded = showBranchMenu, onDismissRequest = { showBranchMenu = false }) {
                             DropdownMenuItem(
                                 text = {
                                     Text(
@@ -662,6 +666,7 @@ fun RepoScreen(s: Screen.Repo) {
                                     }
                                 )
                             }
+                            }
                         }
                         Spacer(Modifier.size(6.dp))
                         IconButton(onClick = { openEditor(null) }, modifier = Modifier.size(40.dp)) {
@@ -677,6 +682,44 @@ fun RepoScreen(s: Screen.Repo) {
                 }
                 item {
                     BreadcrumbRow(path, onOpen = { openDir(it) })
+                }
+                // Baris ".." klasik ala file manager: selalu paling atas untuk naik ke folder sebelumnya
+                if (path.isNotEmpty()) {
+                    item(key = "naik-folder") {
+                        Surface(
+                            onClick = { openDir(path.substringBeforeLast('/', "")) },
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(16.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    Modifier.size(40.dp).background(FilePalette.Folder.copy(alpha = 0.16f), RoundedCornerShape(13.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Filled.ArrowUpward,
+                                        contentDescription = null,
+                                        tint = FilePalette.Folder,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                Spacer(Modifier.size(12.dp))
+                                Column {
+                                    Text("..", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "Folder atas",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
                 if ((realUsage ?: 0L) > 0L || (repoInfo?.sizeKb ?: 0L) > 0L) {
                     item {
@@ -1184,11 +1227,11 @@ private fun FileRow(
                 tint = GrayMuted.copy(alpha = 0.55f),
                 modifier = Modifier.size(18.dp)
             )
-            IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "Menu ${node.name}", tint = GrayMuted, modifier = Modifier.size(17.dp))
-            }
-        }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            Box {
+                IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Menu ${node.name}", tint = GrayMuted, modifier = Modifier.size(17.dp))
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             if (node.type == "dir") {
                 DropdownMenuItem(
                     text = { Text("Buka folder") },
@@ -1246,6 +1289,8 @@ private fun FileRow(
                     leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(17.dp)) },
                     onClick = { menu = false; onDelete() }
                 )
+            }
+                }
             }
         }
     }

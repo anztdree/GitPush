@@ -5,7 +5,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -49,7 +47,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -95,7 +92,6 @@ fun HomeScreen() {
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var searchMode by remember { mutableStateOf(SearchMode.MINE) }
-    var filter by remember { mutableStateOf("all") } // all | public | private
     var showCreate by remember { mutableStateOf(false) }
     // Pemakaian riil per repository (termasuk objek Git LFS): fullName → byte (-1 = gagal hitung)
     var usageMap by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
@@ -179,12 +175,6 @@ fun HomeScreen() {
             it.name.lowercase().contains(q.lowercase()) ||
                 (it.description?.lowercase()?.contains(q.lowercase()) == true) ||
                 it.fullName.lowercase().contains(q.lowercase())
-        }
-    }.let { base ->
-        when (filter) {
-            "public" -> base.filter { !it.isPrivate }
-            "private" -> base.filter { it.isPrivate }
-            else -> base
         }
     }
 
@@ -304,48 +294,30 @@ fun HomeScreen() {
                         }
                     }
                 }
-                // ===== PENCARIAN + FILTER =====
+                // ===== PENCARIAN (tanpa chip permanen — mode global muncul kontekstual) =====
                 item(key = "search") {
-                    Column {
-                        SearchField(
-                            value = query,
-                            onValueChange = { query = it },
-                            placeholder = if (searchMode == SearchMode.GLOBAL) "Cari di seluruh GitHub…" else "Cari repository saya…",
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                        )
+                    SearchField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = if (searchMode == SearchMode.GLOBAL) "Cari di seluruh GitHub…" else "Cari repository saya…",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                    )
+                }
+                if (searchMode == SearchMode.GLOBAL) {
+                    item(key = "globalbanner") {
                         Row(
-                            Modifier.fillMaxWidth()
-                                .horizontalScroll(rememberScrollState())
-                                .padding(horizontal = 16.dp, vertical = 3.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            FilterChip(
-                                selected = searchMode == SearchMode.MINE,
-                                onClick = { searchMode = SearchMode.MINE },
-                                label = { Text("Repo saya") }
+                            Text(
+                                "Mencari di seluruh GitHub",
+                                color = BlueAccent,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
                             )
-                            FilterChip(
-                                selected = searchMode == SearchMode.GLOBAL,
-                                onClick = { searchMode = SearchMode.GLOBAL },
-                                label = { Text("Semua GitHub") }
-                            )
-                            if (searchMode == SearchMode.MINE) {
-                                Spacer(Modifier.width(6.dp))
-                                FilterChip(
-                                    selected = filter == "all",
-                                    onClick = { filter = "all" },
-                                    label = { Text("Semua") }
-                                )
-                                FilterChip(
-                                    selected = filter == "public",
-                                    onClick = { filter = "public" },
-                                    label = { Text("Publik") }
-                                )
-                                FilterChip(
-                                    selected = filter == "private",
-                                    onClick = { filter = "private" },
-                                    label = { Text("Privat") }
-                                )
+                            TextButton(onClick = { searchMode = SearchMode.MINE }) {
+                                Text("← Repo saya", fontSize = 12.sp)
                             }
                         }
                     }
@@ -370,8 +342,15 @@ fun HomeScreen() {
                                 searchMode == SearchMode.GLOBAL && q.length < 2 -> "Pencarian global mencari repository publik di seluruh GitHub"
                                 searchMode == SearchMode.GLOBAL -> "Coba kata kunci lain"
                                 query.isBlank() -> "Tekan + di kanan bawah untuk membuat repository pertama Anda"
-                                else -> "Coba kata kunci lain"
-                            }
+                                else -> "Tidak ada yang cocok di repository Anda"
+                            },
+                            action = if (searchMode == SearchMode.MINE && q.length >= 2) {
+                                {
+                                    TextButton(onClick = { searchMode = SearchMode.GLOBAL }) {
+                                        Text("Cari \"$q\" di seluruh GitHub", fontSize = 12.sp)
+                                    }
+                                }
+                            } else null
                         ) }
                     else -> itemsIndexed(filtered, key = { _, r -> "${r.id}-${r.fullName}" }) { _, repo ->
                         Box(Modifier.padding(horizontal = 16.dp, vertical = 5.dp)) {
