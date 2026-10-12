@@ -709,8 +709,10 @@ object GitHubApi {
     }
 
     /**
-     * Selidiki blob kecil (kandidat pointer LFS: 120–160 B — panjang pointer selalu 124–140 B,
-     * 8 paralel) → peta blobSha → (oid, ukuran asli). Gagal per-blob diabaikan.
+     * Selidiki blob kecil (kandidat pointer LFS) → peta blobSha → (oid, ukuran asli).
+     * Pointer standar 124–140 B; dengan CRLF / properti ekstra bisa sampai ±300 B —
+     * rentang 110..300 mengcover semuanya (file kecil non-LFS ikut terprobe tapi murah,
+     * dibatasi maxProbes). Gagal per-blob diabaikan.
      * maxProbes: pemeriksaan layar folder 120 (cukup utk tampilan ukuran); unduh ZIP
      * memakai 400 supaya folder berisi BANYAK file kecil tidak mendorong pointer LFS
      * keluar daftar (dulu ZIP berisi teks pointer, bukan isi aslinya).
@@ -720,7 +722,7 @@ object GitHubApi {
         candidates: List<Pair<String, Long>>, // sha → ukuran di tree
         maxProbes: Int = 120
     ): Map<String, Pair<String, Long>> {
-        val sel = candidates.filter { it.second in 120..160 }.take(maxProbes)
+        val sel = candidates.filter { it.second in 110..300 }.take(maxProbes)
         if (sel.isEmpty()) return emptyMap()
         val sem = Semaphore(8)
         val out = ConcurrentHashMap<String, Pair<String, Long>>()
@@ -2278,17 +2280,22 @@ object GitHubApi {
         onStage("Membaca metadata…")
         val meta = fetchFileMeta(token, owner, repo, node.path, ref)
 
-        // Deteksi pointer LFS: (1) sudah terdeteksi fetchFileMeta (isLfs — kini cek ISI,
-        // bukan rentang ukuran, karena API satu-file melaporkan ukuran ASLI utk LFS),
-        // (2) isi kecil yang belum terdeteksi, atau (3) blob kecil tanpa isi → cek murah dari bytes.
+        // Deteksi pointer LFS — TIGA lapis, TANPA memandang "size" untuk isi yang ada:
+        // (1) isLfs dari fetchFileMeta (cek ISI — blob LFS selalu pointer kecil ±130 B,
+        //     jadi Contents API SELALU mengirim content-nya walau objek aslinya ratusan MB;
+        //     kolom "size" dari API satu-file = ukuran ASLI objek LFS).
+        // (2) Ada isi → periksa pointer apa pun ukurannya (dulu terpaku size 1..1024 →
+        //     ada jalur yang lolos dan menyimpan POINTER ±134 B sebagai hasil unduhan).
+        // (3) Tanpa isi (blob > 1 MB) tapi kecil → probe blob murah. JANGAN probe blob
+        //     berukuran besar: /git/blobs ditolak >100 MB dan memuat blob raksasa = boros.
         val ptr: Pair<String, Long>? = if (meta.isLfs) {
             val ptxt = if (!meta.contentB64.isNullOrEmpty())
                 String(Base64.decode(meta.contentB64, Base64.DEFAULT))
             else String(fetchBlobBytes(token, owner, repo, meta.sha))
             lfsPointerInfo(ptxt)
-        } else if (!meta.contentB64.isNullOrEmpty() && meta.size in 1..1024) {
+        } else if (!meta.contentB64.isNullOrEmpty()) {
             lfsPointerInfo(String(Base64.decode(meta.contentB64, Base64.DEFAULT)))
-        } else if (meta.contentB64.isNullOrEmpty() && meta.size in 1..1024) {
+        } else if (meta.size in 1..1024) {
             lfsPointerInfo(String(fetchBlobBytes(token, owner, repo, meta.sha)))
         } else null
 

@@ -81,7 +81,12 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 39) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 40) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Unduh file Git LFS kini selalu berisi file ASLI — bukan pointer (versionCode 40):** laporan pemakaian: mengunduh file LFS (mis. `magisk_patched.img`, `vendor_boot.bin`) kadang menyimpan **pointer LFS setinggi ±134 byte**, bukan file aslinya. Perbaikan:
+- Deteksi pointer LFS di jalur unduh diperketat jadi **tiga lapis**: cek isi (blob LFS selalu kecil sehingga isinya selalu dikirim API), cek ulang semua file ber-isi tanpa memandang ukuran, dan probe blob murah untuk file tanpa isi berukuran kecil. Tidak ada lagi jalur yang bisa menyimpan pointer sebagai "file unduhan".
+- Kandidat pointer di daftar file & ZIP diperlebar (110–300 B) sehingga pointer dengan CRLF/properti ekstra juga ter-resolve ke ukuran & isi asli.
+- Terverifikasi langsung ke API GitHub dengan 15 file LFS nyata (`ubl-s23`: magisk img 64 MB, vendor_boot 100 MB, TWRP 100 MB, modul zip, backup SPL, dll.) — semuanya terunduh utuh sesuai ukuran aslinya.
 
 **README.md kini dirender penuh — bukan teks mentah lagi (versionCode 39):** sentuhan akhir tampilan dokumentasi:
 - Tombol README di halaman repository (dan penampil file `.md`) tidak lagi menampilkan markdown mentah — kini dirender layaknya website GitHub: **judul bertingkat**, tebal/miring/~~strikethrough~~, **tabel bergaris**, daftar bertingkat, kutipan, blok kode, task list (kotak centang), dan garis pemisah.
