@@ -2076,6 +2076,60 @@ object GitHubApi {
         throw lastErr ?: GhException("Gagal memproses folder")
     }
 
+    // ============ KOSONGKAN REPOSITORY (1 COMMIT VIA GIT DATA API) ============
+
+    /**
+     * Kosongkan SELURUH isi repository (semua branch context: branch aktif saja) dalam SATU commit.
+     * Cara kerja: buat tree kosong baru → commit dengan parent = HEAD branch → update ref branch.
+     * Riwayat commit lama tetap utuh → tag & RELEASE GitHub tidak tersentuh sama sekali.
+     * Return: commitSha to jumlah file yang dihapus.
+     */
+    suspend fun emptyRepo(
+        token: String, owner: String, repo: String, branch: String,
+        onStage: (String) -> Unit = {}
+    ): Pair<String, Int> = withContext(Dispatchers.IO) {
+        var lastErr: Exception? = null
+        // Diulang maks 3x bila branch bergerak saat update ref (non fast-forward)
+        repeat(3) { attempt ->
+            try {
+                if (attempt > 0) onStage("Branch bergerak — mengulang (${attempt + 1}/3)…")
+                else onStage("Menganalisis tree…")
+                val commitSha = refSha(token, owner, repo, branch)
+                val oldTreeSha = commitTreeSha(token, owner, repo, commitSha)
+                val tree = fetchTreeRecursive(token, owner, repo, oldTreeSha)
+                val files = tree.count { it.type == "blob" }
+                if (files == 0) throw GhException("Repository sudah kosong", 404)
+                onStage("Menyiapkan commit kosong…")
+                // Tree BARU tanpa base_tree & tanpa entri = tree benar-benar kosong
+                val newTree = call(
+                    token, "POST", "/repos/$owner/$repo/git/trees",
+                    JSONObject().put("tree", JSONArray())
+                ) ?: throw GhException("Gagal membuat tree")
+                val newCommit = call(
+                    token, "POST", "/repos/$owner/$repo/git/commits",
+                    JSONObject()
+                        .put("message", "Kosongkan repository via GitPush")
+                        .put("tree", newTree.optString("sha"))
+                        .put("parents", JSONArray().put(commitSha))
+                ) ?: throw GhException("Gagal membuat commit")
+                call(
+                    token, "PATCH", "/repos/$owner/$repo/git/refs/heads/${Uri.encode(branch)}",
+                    JSONObject().put("sha", newCommit.optString("sha"))
+                )
+                invalidateUsage(owner, repo)
+                return@withContext newCommit.optString("sha") to files
+            } catch (e: GhException) {
+                if (e.code == 404) throw e // sudah kosong — jangan diulang
+                lastErr = e
+                if (attempt == 2) throw e
+            } catch (e: Exception) {
+                lastErr = e
+                if (attempt == 2) throw e
+            }
+        }
+        throw lastErr ?: GhException("Gagal mengosongkan repository")
+    }
+
     // ============ NOTIFIKASI ============
 
     suspend fun fetchNotifications(token: String, all: Boolean): List<GhNotification> =

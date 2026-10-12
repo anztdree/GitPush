@@ -81,7 +81,13 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 35) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 36) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Kosongkan repository dalam satu ketukan — release tetap aman (versionCode 36):** fitur baru yang sering diminta pengguna penyimpanan:
+- **Menu "Kosongkan repository"** di menu titik-tiga halaman repository (dikelompokkan bersama "Hapus repository" di zona merah). Cocok saat Anda ingin mengulang isi repo dari nol tanpa menghapus repository-nya.
+- **Semua file hilang dalam SATU commit** — bukan menghapus file satu per satu (yang lama & berisiko kena rate-limit). Aplikasi membuat *tree kosong* lalu commit sekali dan memindahkan branch ke commit tersebut; ratusan file selesai dalam hitungan detik.
+- **Riwayat, tag, dan RELEASE tidak tersentuh** — cara kerjanya murni menambah commit baru di atas sejarah lama, sehingga commit lama tetap bisa dilihat, tag tetap menunjuk commit yang sama, dan semua rilis GitHub (beserta aset APK-nya) tetap utuh dan bisa diunduh seperti biasa.
+- **Dialog konfirmasi berlapis** — wajib mengetik **KOSONGKAN** terlebih dahulu (tombol merah baru aktif), plus catatan hijau yang menegaskan bahwa rilis tidak akan terhapus. Setelah selesai, daftar file langsung dimuat ulang ke kondisi kosong, commit terakhir & ukuran repo ikut diperbarui.
 
 **Redesain "Modern Light" — bukan sekadar ganti warna (versionCode 35):** keluhan "tampilan masih terasa jadul, upgrade tidak terasa" dijawab dengan mengubah bahasa desain light secara menyeluruh, bukan hanya menyetel warna:
 - **Kartu tanpa garis pinggir** — di tema terang semua kartu (beranda, profil, pengaturan, dialog) kini putih bersih **tanpa bingkai abu-abu** di atas kanvas `#F3F5F9`, ala Files by Google / GitHub mobile; bingkai tipis hanya tersisa di tema gelap. Ini pembeda terbesar antara tampilan lama dan baru.

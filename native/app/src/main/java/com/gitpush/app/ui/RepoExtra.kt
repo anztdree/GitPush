@@ -77,6 +77,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.gitpush.app.data.GhIssue
 import com.gitpush.app.data.GhPull
+import com.gitpush.app.data.GhException
 import com.gitpush.app.data.GhRelease
 import com.gitpush.app.data.GhReleaseAsset
 import com.gitpush.app.data.GhRepo
@@ -87,6 +88,120 @@ import kotlinx.coroutines.withContext
 
 private fun issueStateColor(state: String): Color =
     if (state == "open") GreenPrimary else PurpleAccent
+
+// ============================================================
+// ===== KOSONGKAN REPOSITORY — semua file hilang, 1 commit ===
+// ============================================================
+
+/**
+ * Dialog KOSONGKAN repository: seluruh file pada branch aktif dihapus
+ * dalam SATU commit (tree kosong). Riwayat commit, tag, dan RELEASE
+ * GitHub tidak tersentuh sama sekali. Konfirmasi wajib ketik "KOSONGKAN".
+ */
+@Composable
+fun EmptyRepoDialog(
+    owner: String,
+    name: String,
+    branch: String,
+    onDismiss: () -> Unit,
+    onEmptied: (Int) -> Unit
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var confirm by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Kosongkan repository?", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        text = {
+            Column {
+                Text(
+                    "Semua file di $owner/$name (branch \"$branch\") akan dihapus dalam satu commit. Tindakan ini tidak bisa dibatalkan.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    color = GreenPrimary.copy(alpha = 0.08f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = GreenPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Riwayat commit, tag, dan RELEASE tetap utuh — tidak ikut terhapus.",
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            color = GreenPrimary
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = confirm,
+                    onValueChange = { confirm = it },
+                    label = { Text("Ketik \"KOSONGKAN\" untuk konfirmasi") },
+                    singleLine = true,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (error != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    busy = true
+                    error = null
+                    scope.launch {
+                        try {
+                            val (_, count) = withContext(Dispatchers.IO) {
+                                GitHubApi.emptyRepo(Store.token.value, owner, name, branch)
+                            }
+                            Store.log("delete", "Kosongkan repository $name ($count file)", "$owner/$name")
+                            Toast.makeText(ctx, "Repository dikosongkan — $count file dihapus ✓", Toast.LENGTH_LONG).show()
+                            onEmptied(count)
+                        } catch (e: Exception) {
+                            error = when {
+                                (e as? GhException)?.code == 403 ->
+                                    "Token ditolak (403) — PAT perlu scope repo (konten: write) untuk mengubah isi repository."
+                                else -> GitHubApi.humanError(e)
+                            }
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+                enabled = confirm.trim().uppercase() == "KOSONGKAN" && !busy,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = RedDanger,
+                    contentColor = Color.White
+                )
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                } else {
+                    Text("Kosongkan sekarang")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Batal") }
+        }
+    )
+}
 
 // ============================================================
 // ============ ISSUES — daftar, buat, detail, komentar ========

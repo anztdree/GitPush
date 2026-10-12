@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Download
@@ -127,6 +128,7 @@ fun RepoScreen(s: Screen.Repo) {
     var deleteTarget by remember { mutableStateOf<GhNode?>(null) }
     var showRepoMenu by remember { mutableStateOf(false) }
     var deleteRepoDialog by remember { mutableStateOf(false) }
+    var emptyRepoDialog by remember { mutableStateOf(false) }
     var repoInfo by remember { mutableStateOf<GhRepo?>(null) }
     var dirSizes by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var dirCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
@@ -550,6 +552,21 @@ fun RepoScreen(s: Screen.Repo) {
                     }
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                DropdownMenuItem(
+                    text = { Text("Kosongkan repository", color = RedDanger) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.DeleteSweep,
+                            contentDescription = null,
+                            tint = RedDanger,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    onClick = {
+                        showRepoMenu = false
+                        emptyRepoDialog = true
+                    }
+                )
                 DropdownMenuItem(
                     text = { Text("Hapus repository", color = RedDanger) },
                     leadingIcon = {
@@ -1000,6 +1017,25 @@ fun RepoScreen(s: Screen.Repo) {
             onDeleted = {
                 deleteRepoDialog = false
                 Store.pop() // repo sudah tidak ada — kembali ke Beranda
+            }
+        )
+    }
+
+    if (emptyRepoDialog) {
+        EmptyRepoDialog(
+            owner = s.owner,
+            name = s.name,
+            branch = branch,
+            onDismiss = { emptyRepoDialog = false },
+            onEmptied = {
+                emptyRepoDialog = false
+                // Semua isi repo hilang: cache folder & posisi tidak valid lagi
+                folderCache.clear()
+                path = ""
+                Store.lastRepoPath["${s.fullName}@${branch}"] = ""
+                openDir("")
+                reloadMeta()
+                loadRepoInfo()
             }
         )
     }
