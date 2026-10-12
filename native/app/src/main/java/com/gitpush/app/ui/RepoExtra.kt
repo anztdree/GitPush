@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.Public
@@ -83,6 +82,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.gitpush.app.data.GhIssue
 import com.gitpush.app.data.GhPull
 import com.gitpush.app.data.GhException
+import com.gitpush.app.data.GhNode
 import com.gitpush.app.data.GhRelease
 import com.gitpush.app.data.GhReleaseAsset
 import com.gitpush.app.data.GhRepo
@@ -209,12 +209,13 @@ fun EmptyRepoDialog(
 }
 
 // ============================================================
-// ===== HAPUS BEBERAPA FOLDER — centang, hapus, 1 commit =====
+// == HAPUS BEBERAPA ITEM — file & folder, centang, 1 commit ==
 // ============================================================
 
 /**
- * Dialog hapus BEBERAPA folder sekaligus: daftar folder pada [dirPath] dengan kotak
- * centang, lalu semua folder terpilih dihapus dalam SATU commit.
+ * Dialog hapus BEBERAPA item sekaligus: daftar FILE dan FOLDER pada [dirPath]
+ * dengan kotak centang, lalu semua item terpilih dihapus dalam SATU commit
+ * (file dihapus sendiri; folder dihapus beserta seluruh isinya).
  */
 @Composable
 fun MultiDeleteDialog(
@@ -227,18 +228,17 @@ fun MultiDeleteDialog(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var folders by remember { mutableStateOf<List<String>?>(null) } // null = masih memuat
-    var selected by remember { mutableStateOf(emptySet<String>()) }
+    var nodes by remember { mutableStateOf<List<GhNode>?>(null) } // null = masih memuat
+    var selected by remember { mutableStateOf(emptySet<String>()) } // path item
     var loadErr by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(dirPath, branch) {
         try {
-            val nodes = withContext(Dispatchers.IO) {
+            nodes = withContext(Dispatchers.IO) {
                 GitHubApi.fetchContents(Store.token.value, owner, name, dirPath, branch)
             }
-            folders = nodes.filter { it.type == "dir" }.map { it.name }
         } catch (e: Exception) {
             loadErr = GitHubApi.humanError(e)
         }
@@ -246,11 +246,11 @@ fun MultiDeleteDialog(
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("Hapus beberapa folder?", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        title = { Text("Hapus beberapa item?", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
         text = {
             Column {
                 Text(
-                    "Centang folder yang ingin dihapus beserta seluruh isinya — semua dihapus dalam satu commit.",
+                    "Centang file atau folder yang ingin dihapus (folder ikut dengan seluruh isinya) — semuanya dihapus dalam satu commit.",
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -258,20 +258,20 @@ fun MultiDeleteDialog(
                 Spacer(Modifier.height(10.dp))
                 when {
                     loadErr != null -> Text(
-                        "Gagal memuat folder: $loadErr",
+                        "Gagal memuat daftar: $loadErr",
                         color = MaterialTheme.colorScheme.error,
                         fontSize = 12.sp
                     )
-                    folders == null -> Row(
+                    nodes == null -> Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
                     ) {
                         CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(10.dp))
-                        Text("Memuat folder…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Memuat daftar…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    folders!!.isEmpty() -> Text(
-                        "Tidak ada folder di lokasi ini.",
+                    nodes!!.isEmpty() -> Text(
+                        "Tidak ada file atau folder di lokasi ini.",
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -279,42 +279,43 @@ fun MultiDeleteDialog(
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 280.dp)
+                                .heightIn(max = 300.dp)
                                 .verticalScroll(rememberScrollState())
                         ) {
-                            folders!!.forEach { f ->
+                            nodes!!.forEach { nd ->
+                                val (icon, tint) = fileInfo(nd.name, nd.type == "dir")
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(10.dp))
                                         .clickable(enabled = !busy) {
-                                            selected = if (f in selected) selected - f else selected + f
+                                            selected = if (nd.path in selected) selected - nd.path else selected + nd.path
                                         }
                                         .padding(horizontal = 4.dp, vertical = 2.dp)
                                 ) {
-                                    Checkbox(checked = f in selected, onCheckedChange = null, enabled = !busy)
+                                    Checkbox(checked = nd.path in selected, onCheckedChange = null, enabled = !busy)
                                     Icon(
-                                        Icons.Filled.Folder,
+                                        icon,
                                         contentDescription = null,
-                                        tint = FilePalette.Folder,
+                                        tint = tint,
                                         modifier = Modifier.size(19.dp)
                                     )
                                     Spacer(Modifier.width(9.dp))
-                                    Text(f, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(nd.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         }
                         TextButton(
                             onClick = {
-                                selected = if (selected.size == folders!!.size) emptySet() else folders!!.toSet()
+                                selected = if (selected.size == nodes!!.size) emptySet() else nodes!!.map { it.path }.toSet()
                             },
                             enabled = !busy,
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                if (selected.size == folders!!.size) "Batal pilih semua"
-                                else "Pilih semua (${folders!!.size})",
+                                if (selected.size == nodes!!.size) "Batal pilih semua"
+                                else "Pilih semua (${nodes!!.size})",
                                 fontSize = 12.sp
                             )
                         }
@@ -331,14 +332,14 @@ fun MultiDeleteDialog(
                 onClick = {
                     busy = true
                     error = null
-                    val targets = selected.map { if (dirPath.isEmpty()) it else "$dirPath/$it" }
+                    val targets = selected.toList()
                     scope.launch {
                         try {
                             val (_, count) = withContext(Dispatchers.IO) {
-                                GitHubApi.deleteFolders(Store.token.value, owner, name, branch, targets)
+                                GitHubApi.deletePaths(Store.token.value, owner, name, branch, targets)
                             }
-                            Store.log("delete", "Hapus ${targets.size} folder ($count file)", "$owner/$name")
-                            Toast.makeText(ctx, "${targets.size} folder dihapus — $count file ✓", Toast.LENGTH_LONG).show()
+                            Store.log("delete", "Hapus ${targets.size} item ($count file)", "$owner/$name")
+                            Toast.makeText(ctx, "${targets.size} item dihapus — $count file ✓", Toast.LENGTH_LONG).show()
                             onDeleted(count)
                         } catch (e: Exception) {
                             error = GitHubApi.humanError(e)
@@ -356,7 +357,7 @@ fun MultiDeleteDialog(
                 if (busy) {
                     CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                 } else {
-                    Text(if (selected.isEmpty()) "Hapus" else "Hapus ${selected.size} folder")
+                    Text(if (selected.isEmpty()) "Hapus" else "Hapus ${selected.size} item")
                 }
             }
         },

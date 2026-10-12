@@ -2133,18 +2133,19 @@ object GitHubApi {
         throw lastErr ?: GhException("Gagal mengosongkan repository")
     }
 
-    // ============ HAPUS BEBERAPA FOLDER SEKALIGUS (1 COMMIT) ============
+    // ============ HAPUS BEBERAPA ITEM SEKALIGUS (FILE & FOLDER, 1 COMMIT) ============
 
     /**
-     * Hapus beberapa folder (beserta seluruh isinya) dalam SATU commit.
-     * [paths] = path folder relatif ROOT repository (mis. "docs", "gambar/lama").
+     * Hapus beberapa item SEKALIGUS dalam SATU commit — boleh campur file dan folder.
+     * [paths] = path relatif ROOT repository (mis. "docs", "catatan.txt", "gambar/lama").
+     * File dihapus di path-nya sendiri; folder menghapus seluruh blob di bawah prefix-nya.
      * Return: commitSha to jumlah file yang terhapus.
      */
-    suspend fun deleteFolders(
+    suspend fun deletePaths(
         token: String, owner: String, repo: String, branch: String, paths: List<String>,
         onStage: (String) -> Unit = {}
     ): Pair<String, Int> = withContext(Dispatchers.IO) {
-        if (paths.isEmpty()) throw GhException("Tidak ada folder yang dipilih", 400)
+        if (paths.isEmpty()) throw GhException("Tidak ada item yang dipilih", 400)
         var lastErr: Exception? = null
         repeat(3) { attempt ->
             try {
@@ -2153,16 +2154,20 @@ object GitHubApi {
                 val commitSha = refSha(token, owner, repo, branch)
                 val oldTreeSha = commitTreeSha(token, owner, repo, commitSha)
                 val tree = fetchTreeRecursive(token, owner, repo, oldTreeSha)
-                val prefixes = paths.map { "$it/" }
-                val inside = tree.filter { e -> e.type == "blob" && prefixes.any { e.path.startsWith(it) } }
-                if (inside.isEmpty()) {
-                    throw GhException("Folder terpilih kosong atau tidak ditemukan", 404)
+                // Kumpulkan semua blob yang harus dihapus: file tepat di path + seluruh isi folder
+                val toDelete = LinkedHashSet<String>()
+                for (p in paths) {
+                    tree.firstOrNull { it.path == p && it.type == "blob" }?.let { toDelete.add(it.path) }
+                    tree.filter { it.type == "blob" && it.path.startsWith("$p/") }.forEach { toDelete.add(it.path) }
                 }
-                onStage("Menyiapkan ${inside.size} file…")
+                if (toDelete.isEmpty()) {
+                    throw GhException("Item terpilih tidak ditemukan atau sudah kosong", 404)
+                }
+                onStage("Menyiapkan ${toDelete.size} file…")
                 val arr = JSONArray()
-                for (e in inside) {
+                for (e in toDelete) {
                     arr.put(
-                        JSONObject().put("path", e.path).put("mode", "100644").put("sha", JSONObject.NULL)
+                        JSONObject().put("path", e).put("mode", "100644").put("sha", JSONObject.NULL)
                     )
                 }
                 val newTree = call(
@@ -2170,8 +2175,8 @@ object GitHubApi {
                     JSONObject().put("base_tree", oldTreeSha).put("tree", arr)
                 ) ?: throw GhException("Gagal membuat tree")
                 val label =
-                    if (paths.size == 1) "Hapus folder ${paths[0]}"
-                    else "Hapus ${paths.size} folder: ${paths.joinToString(", ")}"
+                    if (paths.size == 1) "Hapus ${paths[0]}"
+                    else "Hapus ${paths.size} item: ${paths.joinToString(", ")}"
                 val newCommit = call(
                     token, "POST", "/repos/$owner/$repo/git/commits",
                     JSONObject()
@@ -2184,7 +2189,7 @@ object GitHubApi {
                     JSONObject().put("sha", newCommit.optString("sha"))
                 )
                 invalidateUsage(owner, repo)
-                return@withContext newCommit.optString("sha") to inside.size
+                return@withContext newCommit.optString("sha") to toDelete.size
             } catch (e: GhException) {
                 if (e.code == 404) throw e
                 lastErr = e
@@ -2194,7 +2199,7 @@ object GitHubApi {
                 if (attempt == 2) throw e
             }
         }
-        throw lastErr ?: GhException("Gagal menghapus folder")
+        throw lastErr ?: GhException("Gagal menghapus item")
     }
 
     // ============ NOTIFIKASI ============

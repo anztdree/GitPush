@@ -81,7 +81,12 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 37) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 38) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**"Hapus beberapa item…" — file dan folder bisa dipilih campur (versionCode 38):** penyempurnaan fitur hapus-massal:
+- Fitur "Hapus beberapa folder…" kini menjadi **"Hapus beberapa item…"** — daftar di dialog mencakup **file dan folder sekaligus**, lengkap dengan ikon & warna per jenis file (kode hijau, dokumen biru, gambar ungu, dll. seperti di daftar file).
+- Centang bebas: satu file saja, beberapa file, satu folder, atau **campuran file + folder** — semuanya dihapus dalam **satu commit**; folder tetap ikut menghapus seluruh isinya.
+- Tombol "Pilih semua" menghitung seluruh item di lokasi aktif, dan label tombol merah berubah mengikuti jumlah pilihan ("Hapus 3 item"). Setelah selesai, muncul ringkasan jumlah file yang benar-benar terhapus.
 
 **Perbaikan error 422 & "Kosongkan" kini menghabiskan riwayat juga + hapus beberapa folder sekaligus (versionCode 37):** tindak lanjut dari pemakaian nyata:
 - **Error "data invalid 422" saat Kosongkan repository — DIPERBAKI.** Akar masalah: GitHub menolak pembuatan *tree* kosong via endpoint `git/trees` (respons 422 *Invalid tree info*). Solusinya: aplikasi kini memakai **tree kosong bawaan git** (`4b825dc…4904`) yang selalu dikenal git tanpa perlu dibuat — fitur kosongkan kini berjalan mulus. Sudah diuji langsung ke API GitHub sebelum dirilis.

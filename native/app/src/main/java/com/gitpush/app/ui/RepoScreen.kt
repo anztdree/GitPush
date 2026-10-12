@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CallMerge
 import androidx.compose.material.icons.filled.CallSplit
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -45,7 +46,6 @@ import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderDelete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
@@ -555,10 +555,10 @@ fun RepoScreen(s: Screen.Repo) {
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                 DropdownMenuItem(
-                    text = { Text("Hapus beberapa folder…", color = RedDanger) },
+                    text = { Text("Hapus beberapa item…", color = RedDanger) },
                     leadingIcon = {
                         Icon(
-                            Icons.Filled.FolderDelete,
+                            Icons.Filled.Checklist,
                             contentDescription = null,
                             tint = RedDanger,
                             modifier = Modifier.size(18.dp)
