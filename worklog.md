@@ -360,3 +360,23 @@ Stage Summary:
 - origin/main = 8d006b7 (versionCode 34); release v1.0 = APK build 34 terverifikasi.
 - Light-first: default terang, aksen kontras di kedua tema, bilah sistem & splash ikut tema.
 - HeroPanel & gradien identitas tetap hijau gelap premium — identitas visual tidak berubah.
+
+---
+Task ID: 34-b
+Agent: Z.ai Code (main)
+Task: Kilau terakhir — redesign "Modern Light" sungguhan setelah pengguna komplain v34 "tidak ada bedanya"
+
+Work Log:
+- Diagnosa commit v34 (8d006b7): hanya menyetel warna (kanvas #F4F7F9→#F6F8FA, hampir identik) + status bar; layout & gaya kartu tidak disentuh — kartu tetap "kotak berbingkai 1dp" gaya lama → wajar terasa tidak ada bedanya.
+- Bahasa desain baru "Modern Light": kartu putih TANPA garis pinggir di kanvas #F3F5F9 (ala Files by Google/GitHub mobile); garis tipis hanya tersisa di tema gelap.
+- Common.kt: helper isDarkTheme() (deteksi luminance background), Modifier.cardShadow() (bayangan 5dp abu-biru #44546B, hanya light), cardBorder() (BorderStroke hanya dark); GpCard/SkeletonRows pakai cardBorder(); SearchField jadi pil putih melayang + shadow di light; EmptyState ikon dalam medali hijau 66dp; HeroPanel corner 24dp.
+- MainActivity: NavigationBar M3 diganti pil melayang kustom (RoundedCornerShape 26dp, margin 18/12dp, tinggi 66dp, cardShadow, navigationBarsPadding); NavItem kustom dengan pil indikator hijau yang membesar saat aktif + badge notifikasi; import cardBorder/cardShadow.
+- Theme.kt: shapes naik (8/12/16/20/28dp); palet light baru (background #F3F5F9, outlineVariant #E6EAF1, onSurfaceVariant #5B6472); navigationBarColor sistem TRANSPARAN + isNavigationBarContrastEnforced(false) — status bar light #F3F5F9.
+- HomeScreen: RepoCard sudut 20dp, strip gradien 3dp dihapus, cardBorder/cardShadow, jarak antar kartu 5→7dp; perbaikan syntax penutup combinedClickable (} → )) yang sempat keliru saat edit.
+- AuthScreen FeatureTile, RepoScreen (baris ".." & baris file), TransferCenter UploadTray: border → cardBorder() kondisional.
+- versionCode 34→35; README entri v35 (+ investigasi "alaman Releases" ternyata artefak tampilan karakter '[' — file sudah benar).
+- Build sukses setelah fix Color.TRANSPARENT→Color.Transparent; APK 4,49 MB, sha256 84d0bd58...
+
+Stage Summary:
+- Perubahan TERSLIHAT jelas: tanpa garis kartu + bayangan + nav melayang + sudut membulat + kanvas baru.
+- Komit 56a8e62 (kode) + entri README v35; versionCode 35.

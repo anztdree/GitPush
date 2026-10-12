@@ -81,7 +81,14 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 34) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 35) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Redesain "Modern Light" — bukan sekadar ganti warna (versionCode 35):** keluhan "tampilan masih terasa jadul, upgrade tidak terasa" dijawab dengan mengubah bahasa desain light secara menyeluruh, bukan hanya menyetel warna:
+- **Kartu tanpa garis pinggir** — di tema terang semua kartu (beranda, profil, pengaturan, dialog) kini putih bersih **tanpa bingkai abu-abu** di atas kanvas `#F3F5F9`, ala Files by Google / GitHub mobile; bingkai tipis hanya tersisa di tema gelap. Ini pembeda terbesar antara tampilan lama dan baru.
+- **Bayangan lembut berlapis** — kartu repository, kolom pencarian, dan tile layar masuk mendapat bayangan halus keabu-biruan (bukan hitam pekat) sehingga elemen utama tampak "melayang" dengan kedalaman modern.
+- **Navigasi bawah melayang (floating pill)** — NavigationBar polos yang menempel di tepi diganti pil membulat dengan bayangan, berjarak dari tepi layar; bilah navigasi sistem Android dibuat **transparan** sehingga pil tampak benar-benar mengambang. Indikator item aktif: pil hijau di belakang ikon yang membesar saat dipilih.
+- **Sudut lebih membulat di seluruh aplikasi** — skala shape global naik (komponen kecil 8dp → kartu 20dp → lembar 28dp) untuk kesan modern yang lembut.
+- **Detail lain** — strip gradien tipis di atas kartu repository dihapus (bersih), ikon keadaan kosong kini dalam "medali" hijau, kolom pencarian jadi pil putih melayang, jarak antar kartu lebih lega.
 
 **Tema terang kini bawaan & tampil lebih modern (versionCode 34):** aplikasi dirasakan "jadul" karena selama ini berjalan dengan tema gelap sebagai default dan sebagian warna aksen diambil dari palet GitHub versi dark bahkan saat tema terang aktif. Sekarang:
 - **Terang = tema default** — pemasangan baru dan pembaruan ini langsung tampil terang; pilihan "Gelap" dan "Sistem" tetap tersedia di Pengaturan dan kini dihormati penuh (sekali migrasi otomatis mengangkat pengaturan gelap bawaan versi lama ke terang, sekali saja, tanpa pernah mengubah pilihan eksplisit Anda lagi).
