@@ -2122,6 +2122,111 @@ object GitHubApi {
         }
 
     /**
+     * Unggah file sebagai ASET rilis (lampiran unduhan) — streaming langsung dari
+     * ContentResolver ke uploads.github.com (RAM aman untuk file ratusan MB, batas
+     * GitHub 2 GiB per aset). Bila sudah ada aset bernama sama di rilis itu, aset lama
+     * DIHAPUS lalu file baru diunggah — perilaku "ganti file" supaya APK di rilis bisa
+     * diperbarui langsung dari aplikasi (permintaan pengguna: "belum ada upload file
+     * release"). Koneksi putus / 5xx diulang hingga 5x dengan backoff.
+     */
+    suspend fun uploadReleaseAsset(
+        token: String, owner: String, repo: String, releaseId: Long,
+        fileName: String, size: Long,
+        openStream: () -> InputStream,
+        onProgress: (Long, Long) -> Unit = { _, _ -> }
+    ): Unit = withContext(Dispatchers.IO) {
+        val nm = fileName.substringAfterLast('/').trim()
+            .replace(Regex("[\\\\/:*?\"<>|]"), "-").ifEmpty { "file" }
+
+        suspend fun existingAsset(): GhReleaseAsset? = runCatching {
+            val arr = callArray(token, "GET", "/repos/$owner/$repo/releases/$releaseId/assets?per_page=100")
+            (0 until arr.length()).map { arr.getJSONObject(it) }
+                .firstOrNull { it.optString("name") == nm }
+                ?.let {
+                    GhReleaseAsset(
+                        id = it.optLong("id"), name = it.optString("name"),
+                        size = it.optLong("size"), downloadCount = 0, contentType = ""
+                    )
+                }
+        }.getOrNull()
+
+        existingAsset()?.let { deleteReleaseAsset(token, owner, repo, it.id) }
+
+        val url = "https://uploads.github.com/repos/$owner/$repo/releases/$releaseId/assets?name=${Uri.encode(nm)}"
+        var attempt = 0
+        while (true) {
+            attempt++
+            val sentRef = AtomicLong(0)
+            val wd = StallWatchdog { sentRef.get() }
+            val body = object : RequestBody() {
+                override fun contentType(): okhttp3.MediaType? = "application/octet-stream".toMediaType()
+                override fun contentLength(): Long = if (size > 0) size else -1
+                override fun writeTo(sink: BufferedSink) {
+                    openStream().use { src ->
+                        val buf = ByteArray(64 * 1024)
+                        var sent = 0L
+                        while (true) {
+                            val n = src.read(buf)
+                            if (n < 0) break
+                            sink.write(buf, 0, n)
+                            sent += n
+                            sentRef.set(sent)
+                            wd.progress()
+                            onProgress(sent, size)
+                        }
+                    }
+                }
+            }
+            val req = Request.Builder().url(url)
+                .header("Authorization", "Bearer $token")
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2022-11-28")
+                .header("User-Agent", "GitPush-Android")
+                .post(body)
+                .build()
+            val call = httpH1.newCall(req)
+            wd.arm(call)
+            val code: Int
+            val text: String
+            val ra: Long
+            try {
+                call.execute().use { r ->
+                    code = r.code
+                    text = r.body?.string().orEmpty()
+                    ra = r.header("Retry-After")?.toLongOrNull()?.times(1000) ?: 0L
+                }
+            } catch (e: IOException) {
+                if (attempt >= 5) throw GhException("Koneksi gagal: ${e.message}", 0)
+                delay(retryBackoffMs(attempt - 1, 0))
+                continue
+            } finally {
+                wd.stop()
+            }
+            if (code in 200..299) return@withContext
+            if (code == 422 && text.contains("already_exists", true)) {
+                // Aset bernama sama muncul di antara waktu → hapus lalu coba sekali lagi.
+                existingAsset()?.let { deleteReleaseAsset(token, owner, repo, it.id) }
+                if (attempt >= 2) throw GhException("Gagal mengganti aset bernama sama (HTTP 422)", 422)
+                continue
+            }
+            val retryable = code in 500..599 || code == 429 || code == 0 ||
+                (code == 403 && (ra > 0 || text.contains("secondary", true)))
+            if (retryable && attempt < 5) {
+                delay(retryBackoffMs(attempt - 1, ra))
+                continue
+            }
+            throw GhException("Gagal mengunggah aset (HTTP $code): ${text.take(160)}", code, ra)
+        }
+    }
+
+    /** Hapus satu aset rilis (lampiran). */
+    suspend fun deleteReleaseAsset(token: String, owner: String, repo: String, assetId: Long): Unit =
+        withContext(Dispatchers.IO) {
+            call(token, "DELETE", "/repos/$owner/$repo/releases/assets/$assetId")
+            Unit
+        }
+
+    /**
      * Unduh aset rilis (file lampiran) — stream langsung ke Download via endpoint
      * aset dengan Accept: application/octet-stream (token dipakai utk repo privat;
      * redirect ke penyimpanan unduhan GitHub ditangani otomatis oleh OkHttp).

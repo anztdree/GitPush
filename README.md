@@ -81,7 +81,9 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.1** (versionCode 24). Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.2** (versionCode 25). Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Kelola aset rilis (versionCode 25):** bagian Releases kini juga bisa **mengunggah file sebagai aset rilis** (tombol *Tambah file* pada setiap kartu rilis — pilih satu atau banyak file sekaligus, unggah streaming dengan progres, batas GitHub 2 GB per aset) dan **menghapus aset** (ikon hapus per baris aset, dengan konfirmasi). Mengunggah file dengan nama yang sama otomatis **mengganti** aset lama — pas untuk memperbarui APK di rilis langsung dari aplikasi.
 
 **Andalkan unggahan (versionCode 24):** akar keluhan "upload sering gagal — 403 lalu commit tak jadi" tuntas dirombak: (1) **pacing global konstan** — semua request pembuat-konten kini berjarak aman ±66 req/menit sejak detik pertama dan jeda itu dibagi rata semua worker (dulu mulai tanpa jeda, lalu longgar sampai nol → burst → 403 berulang); (2) **circuit breaker** — begitu GitHub menghukum 403, SEMUA worker berhenti menghormati masa hukuman (patuh `Retry-After`, 20–120 dtk bertingkat) sehingga blokir tak lagi diperpanjang; (3) **fase commit diperkuat** — ref/tree/commit/ref kini ikut retry sabar 10 percobaan dengan backoff eksponensial s/d 60 dtk (dulu GET polos tanpa retry — satu 403 di detik terakhir membuang seluruh unggahan); (4) **"Coba Lagi" file gagal** — file yang tetap gagal TIDAK hilang: tetap tersimpan, tombol *Coba lagi N file gagal* mengunggahnya ulang dalam 1 commit dan otomatis menyatu dengan file yang sudah berhasil (blob yang sudah sampai tak dikirim dua kali).
 

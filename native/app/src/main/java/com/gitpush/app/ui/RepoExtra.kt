@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -38,6 +40,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -643,6 +646,20 @@ fun PullsDialog(
 // ===== RELEASES — daftar, edit, buat, hapus, unduh aset =====
 // ============================================================
 
+/** Nama file dari Uri SAF — query ContentResolver, cadangan ke lastPathSegment. */
+private fun queryUriName(ctx: android.content.Context, uri: Uri): String? {
+    ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+        if (c.moveToFirst()) return c.getString(0) ?: uri.lastPathSegment?.substringAfterLast('/')
+    }
+    return uri.lastPathSegment?.substringAfterLast('/')
+}
+
+/** Ukuran file dari Uri SAF (0 bila tidak diketahui). */
+private fun queryUriSize(ctx: android.content.Context, uri: Uri): Long =
+    ctx.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use { c ->
+        if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else 0L
+    } ?: 0L
+
 @Composable
 fun ReleasesDialog(
     owner: String, name: String,
@@ -654,6 +671,9 @@ fun ReleasesDialog(
     var editTarget by remember { mutableStateOf<GhRelease?>(null) }
     var deleteTarget by remember { mutableStateOf<GhRelease?>(null) }
     var showCreate by remember { mutableStateOf(false) }
+    // Rilis tujuan unggah aset + pasangan (rilis, aset) yang akan dihapus
+    var uploadTarget by remember { mutableStateOf<GhRelease?>(null) }
+    var deleteAssetTarget by remember { mutableStateOf<Pair<GhRelease, GhReleaseAsset>?>(null) }
     val ctx = LocalContext.current
 
     val load: () -> Unit = {
@@ -669,6 +689,49 @@ fun ReleasesDialog(
         }
     }
     LaunchedEffect(Unit) { load() }
+
+    // ===== UNGGAH FILE SEBAGAI ASET RILIS (fitur baru — permintaan pengguna:
+    // "pada bagian release tidak ada upload file") — pilih 1+ file dari penyimpanan,
+    // unggah berurutan dengan progres, nama sama otomatis MENGGANTI aset lama. =====
+    val pickUpload = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        val rel = uploadTarget ?: return@rememberLauncherForActivityResult
+        uploadTarget = null
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            var ok = 0
+            var lastErr: String? = null
+            uris.forEachIndexed { idx, uri ->
+                val nm = queryUriName(ctx, uri) ?: "file-${idx + 1}"
+                val sz = queryUriSize(ctx, uri)
+                Store.showOp(
+                    if (uris.size > 1) "Mengunggah aset ${idx + 1}/${uris.size}" else "Mengunggah aset rilis",
+                    nm
+                )
+                try {
+                    withContext(Dispatchers.IO) {
+                        GitHubApi.uploadReleaseAsset(
+                            Store.token.value, owner, name, rel.id, nm, sz,
+                            openStream = {
+                                ctx.contentResolver.openInputStream(uri)
+                                    ?: throw java.io.IOException("File tidak dapat dibuka")
+                            },
+                            onProgress = { done, total -> Store.opProgress(done, total) }
+                        )
+                    }
+                    Store.log("upload", "Unggah aset $nm ke ${rel.tagName}", "$owner/$name")
+                    ok++
+                } catch (e: Exception) {
+                    lastErr = GitHubApi.humanError(e)
+                }
+            }
+            Store.hideOp()
+            if (ok > 0) Toast.makeText(ctx, "$ok file terunggah ke ${rel.tagName}", Toast.LENGTH_SHORT).show()
+            lastErr?.let { Toast.makeText(ctx, "Gagal: $it", Toast.LENGTH_LONG).show() }
+            load()
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
@@ -717,7 +780,9 @@ fun ReleasesDialog(
                                 ReleaseCard(
                                     release = r, owner = owner, name = name,
                                     onEdit = { editTarget = r },
-                                    onDelete = { deleteTarget = r }
+                                    onDelete = { deleteTarget = r },
+                                    onAddFiles = { uploadTarget = r; pickUpload.launch(arrayOf("*/*")) },
+                                    onDeleteAsset = { deleteAssetTarget = r to it }
                                 )
                             }
                         }
@@ -748,11 +813,43 @@ fun ReleasesDialog(
             onCreated = { showCreate = false; load() }
         )
     }
+
+    // Konfirmasi hapus satu aset rilis
+    deleteAssetTarget?.let { (rel, asset) ->
+        AlertDialog(
+            onDismissRequest = { deleteAssetTarget = null },
+            title = { Text("Hapus aset?") },
+            text = {
+                Text("${asset.name} (${formatBytes(asset.size)}) akan dihapus permanen dari rilis ${rel.tagName}.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val target = deleteAssetTarget
+                    deleteAssetTarget = null
+                    if (target != null) scope.launch {
+                        Store.showOp("Menghapus aset", target.second.name)
+                        try {
+                            withContext(Dispatchers.IO) {
+                                GitHubApi.deleteReleaseAsset(Store.token.value, owner, name, target.second.id)
+                            }
+                            Toast.makeText(ctx, "Aset dihapus dari rilis", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(ctx, "Gagal: ${GitHubApi.humanError(e)}", Toast.LENGTH_LONG).show()
+                        }
+                        Store.hideOp()
+                        load()
+                    }
+                }) { Text("Hapus", color = RedDanger, fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { deleteAssetTarget = null }) { Text("Batal") } }
+        )
+    }
 }
 
 /**
  * Kartu satu rilis: judul + badge draf/prarilis, meta, catatan Markdown,
- * daftar aset dengan tombol unduh (bisa sekaligus), aksi edit & hapus.
+ * daftar aset dengan tombol unduh & hapus, tombol "Tambah file" (unggah aset),
+ * aksi edit & hapus rilis.
  */
 @Composable
 private fun ReleaseCard(
@@ -760,7 +857,9 @@ private fun ReleaseCard(
     owner: String,
     name: String,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onAddFiles: () -> Unit,
+    onDeleteAsset: (GhReleaseAsset) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
@@ -848,10 +947,20 @@ private fun ReleaseCard(
             Spacer(Modifier.height(10.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
             Spacer(Modifier.height(10.dp))
-            Text(
-                "Aset (${release.assets.size}) • ${formatBytes(totalAssetBytes)}",
-                fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = PurpleAccent
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Aset (${release.assets.size}) • ${formatBytes(totalAssetBytes)}",
+                    fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = PurpleAccent,
+                    modifier = Modifier.weight(1f)
+                )
+                if (release.assets.size > 1) {
+                    TextButton(onClick = { downloadAssets(release.assets) }) {
+                        Icon(Icons.Filled.Download, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Unduh semua", fontSize = 11.sp, color = GreenPrimary, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
             Spacer(Modifier.height(4.dp))
             release.assets.forEach { a ->
                 val (icon, tint) = fileInfo(a.name, false)
@@ -874,6 +983,9 @@ private fun ReleaseCard(
                     IconButton(onClick = { downloadAssets(listOf(a)) }, modifier = Modifier.size(34.dp)) {
                         Icon(Icons.Filled.Download, contentDescription = "Unduh ${a.name}", tint = GreenPrimary, modifier = Modifier.size(19.dp))
                     }
+                    IconButton(onClick = { onDeleteAsset(a) }, modifier = Modifier.size(34.dp)) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Hapus ${a.name}", tint = RedDanger, modifier = Modifier.size(17.dp))
+                    }
                 }
             }
         }
@@ -891,14 +1003,12 @@ private fun ReleaseCard(
                 Spacer(Modifier.width(5.dp))
                 Text("Hapus", fontSize = 12.5.sp, color = RedDanger, fontWeight = FontWeight.SemiBold)
             }
-            Spacer(Modifier.weight(1f))
-            if (release.assets.size > 1) {
-                TextButton(onClick = { downloadAssets(release.assets) }) {
-                    Icon(Icons.Filled.Download, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("Unduh semua", fontSize = 12.sp, color = GreenPrimary, fontWeight = FontWeight.SemiBold)
-                }
+            TextButton(onClick = onAddFiles) {
+                Icon(Icons.Filled.UploadFile, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Tambah file", fontSize = 12.5.sp, color = GreenPrimary, fontWeight = FontWeight.SemiBold)
             }
+            Spacer(Modifier.weight(1f))
         }
     }
 }

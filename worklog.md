@@ -3,7 +3,7 @@
 ---
 Task ID: 1
 Agent: Z.ai Code (main)
-Task: Membangun "GitBulk" — web app upload massal ke GitHub dengan tampilan modern ala aplikasi GitHub resmi (mobile-first, bisa Add to Home Screen)
+Task: Membangun "GitPush" — web app upload massal ke GitHub dengan tampilan modern ala aplikasi GitHub resmi (mobile-first, bisa Add to Home Screen)
 
 Work Log:
 - Inspeksi struktur proyek: Next.js 16 App Router, shadcn/ui lengkap, zustand, lucide-react tersedia.
@@ -23,7 +23,7 @@ Stage Summary:
 ---
 Task ID: 2
 Agent: Z.ai Code (main)
-Task: Upgrade GitBulk agar "tidak kalah dari aplikasi GitHub resmi + website GitHub PC" — tambah tab Notifikasi, render README ala web GitHub, statistik repo (issues), dan PWA installable penuh.
+Task: Upgrade GitPush agar "tidak kalah dari aplikasi GitHub resmi + website GitHub PC" — tambah tab Notifikasi, render README ala web GitHub, statistik repo (issues), dan PWA installable penuh.
 
 Work Log:
 - Data layer: types.ts (+GHNotification, +GHReadme, +open_issues_count), api.ts (+fetchReadme, +fetchUnreadNotifications, +fetchAllNotifications, +markThreadRead, +markAllNotificationsRead, +decodeB64 UTF-8-safe), demo.ts (+mock inbox 5 notifikasi yang bermutasi saat mark-read, +readme markdown per repo base64, +open_issues_count).
@@ -35,10 +35,10 @@ Work Log:
 - globals.css: blok style .markdown-body ala GitHub dark (heading border, code block, tabel scroll-x, blockquote, dst).
 - PWA: scripts/gen-icons.mjs (sharp: icon-192/512, icon-maskable-512 safe-zone 80%, apple-touch-icon 180), manifest.webmanifest + ikon PNG & orientation portrait, public/sw.js network-first (tanpa cache /api/), metadata icons di layout.tsx.
 - Lint 0 error 0 warning; dev.log tanpa error.
-- Verifikasi Agent Browser (mobile 390x844 + desktop 1366x900, mode demo): login demo → beranda 9 repo + badge "3 belum dibaca" → tab Notifikasi (5 item, filter unread=3) → tandai semua dibaca (badge hilang, toast muncul) → klik notifikasi membuka repo GitHub di tab baru → buka repo belajar-react-native (chip "1 issue", tombol Lihat di GitHub & Issues, README.md ter-render: heading/list/strong/code block) → bulk upload 2 file ke folder uji-gitbulk dalam 1 commit → success card "Upload berhasil!" → folder uji-gitbulk + kedua file muncul di tree, commit 36081a6 masuk Commit Terbaru, riwayat upload tercatat di Profil → konsol & dev.log bersih, layout desktop rapi.
+- Verifikasi Agent Browser (mobile 390x844 + desktop 1366x900, mode demo): login demo → beranda 9 repo + badge "3 belum dibaca" → tab Notifikasi (5 item, filter unread=3) → tandai semua dibaca (badge hilang, toast muncul) → klik notifikasi membuka repo GitHub di tab baru → buka repo belajar-react-native (chip "1 issue", tombol Lihat di GitHub & Issues, README.md ter-render: heading/list/strong/code block) → bulk upload 2 file ke folder uji-gitpush dalam 1 commit → success card "Upload berhasil!" → folder uji-gitpush + kedua file muncul di tree, commit 36081a6 masuk Commit Terbaru, riwayat upload tercatat di Profil → konsol & dev.log bersih, layout desktop rapi.
 
 Stage Summary:
-- GitBulk kini punya 4 fitur andalan aplikasi GitHub resmi (repo, notifikasi, profil, jelajah file) + fitur khas web PC (README, issues) + keunggulan unik bulk upload 1-commit.
+- GitPush kini punya 4 fitur andalan aplikasi GitHub resmi (repo, notifikasi, profil, jelajah file) + fitur khas web PC (README, issues) + keunggulan unik bulk upload 1-commit.
 - PWA kini memenuhi syarat install Chrome Android (manifest + SW fetch handler + ikon PNG 192/512/maskable).
 - Artefak: 3 file baru (NotificationsView.tsx, sw.js, gen-icons.mjs), 4 ikon PNG baru, 9 file dimodifikasi.
 
@@ -208,3 +208,23 @@ Work Log:
 Stage Summary:
 - origin/main kini memuat commit perbaikan keandalan upload (versionCode 24); Release v1.1 berisi APK terbaru.
 - Keluhan user tuntas di akar: upload massal tidak lagi mengosilasi ke 403, commit tidak bisa batal karena satu 403 di detik terakhir, dan file yang gagal tidak pernah hilang (tombol "Coba Lagi" khusus file gagal yang menyatu dengan file yang sudah terunggah).
+
+---
+Task ID: 27
+Agent: Z.ai Code (main)
+Task: (1) "Bagian release tidak ada edit / upload file release — belum sempurna"; (2) simpan PAT utk pekerjaan lanjutan; (3) sisa nama lama "GitBulk" diganti "GitPush" (logo brand tersedia)
+
+Work Log:
+- PAT disimpan aman di /home/z/.gp-pat (chmod 600) — tervalidasi sebagai login anztdree; TIDAK di-revoke, dipakai push & rilis.
+- Sandbox reset antar pesan: repo di-clone ulang (commit terbaru da76ed4 utuh di origin), JDK Temurin 21 + cmdline-tools + platform-36 + build-tools 36 + platform-tools dipulihkan, local.properties ditulis ulang.
+- Penelusuran nama lama: kode Android & README BERSIH dari "GitBulk" (app sudah 100% GitPush; ikon launcher sudah dibuat dari brand/icon-raw.png di iterasi sebelumnya; web app lama sudah tidak ada). Sisa "GitBulk" hanya di worklog.md (log historis) → diganti semua menjadi GitPush/uji-gitpush (0 sisa).
+- Fitur rilis dianalisis: Edit/Buat/Hapus rilis + unduh aset sudah ada sejak v1.1 (build 23) — user masih di v1.0 (build 22) sehingga tidak melihatnya; yang BENAR-BENAR belum ada = unggah aset & hapus aset.
+- GitHubApi.kt: fungsi BARU uploadReleaseAsset (streaming RequestBody dari ContentResolver ke uploads.github.com, StallWatchdog, retry 5x backoff, nama sama = aset lama otomatis DIHAPUS lalu diganti (422 already_exists ditangani), batas GitHub 2 GB/aset) + deleteReleaseAsset.
+- RepoExtra.kt: tombol "Tambah file" (ikon UploadFile, hijau) di tiap kartu rilis → SAF OpenMultipleDocuments → unggah berurutan dengan progres Store.showOp/opProgress + toast hasil + refresh; tombol hapus (ikon Delete merah) per baris aset dengan dialog konfirmasi; "Unduh semua" pindah ke baris header "Aset (N) • ukuran" agar bar aksi muat di layar sempit; helper queryUriName/queryUriSize.
+- versionCode 25, versionName 1.2; README bagian Versi ditambah "Kelola aset rilis".
+- Build: BUILD SUCCESSFUL; aapt: versionCode 25, versionName 1.2.
+
+Stage Summary:
+- Rilis kini bisa dikelola PENUH dari aplikasi: buat/edit/hapus rilis, unggah & ganti & hapus & unduh aset — APK rilis bisa diperbarui dari HP tanpa buka GitHub web.
+- Nama lama "GitBulk" tuntas dibersihkan dari repo (kode memang sudah GitPush; log historis ikut diganti).
+- Artefak: GitPush-v1.2.apk (versionCode 25) → Release v1.2 baru.
