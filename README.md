@@ -81,7 +81,13 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 38) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 39) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**README.md kini dirender penuh — bukan teks mentah lagi (versionCode 39):** sentuhan akhir tampilan dokumentasi:
+- Tombol README di halaman repository (dan penampil file `.md`) tidak lagi menampilkan markdown mentah — kini dirender layaknya website GitHub: **judul bertingkat**, tebal/miring/~~strikethrough~~, **tabel bergaris**, daftar bertingkat, kutipan, blok kode, task list (kotak centang), dan garis pemisah.
+- **Gambar ikut tampil** — logo, badge/shield, dan tangkapan layar; URL relatif (mis. `docs/preview.png`) otomatis diarahkan ke `raw.githubusercontent.com`, dan HTML ringan seperti `<img>` ikut dirender.
+- **Tautan bisa diklik** dan langsung dibuka di peramban.
+- Renderer yang sama dipakai juga untuk catatan release dan isi issue, dengan warna yang mengikuti tema terang/gelap aplikasi.
 
 **"Hapus beberapa item…" — file dan folder bisa dipilih campur (versionCode 38):** penyempurnaan fitur hapus-massal:
 - Fitur "Hapus beberapa folder…" kini menjadi **"Hapus beberapa item…"** — daftar di dialog mencakup **file dan folder sekaligus**, lengkap dengan ikon & warna per jenis file (kode hijau, dokumen biru, gambar ungu, dll. seperti di daftar file).

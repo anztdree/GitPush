@@ -121,7 +121,7 @@ fun RepoScreen(s: Screen.Repo) {
     var branches by remember { mutableStateOf<List<GhBranch>>(emptyList()) }
     var showBranchMenu by remember { mutableStateOf(false) }
     var commits by remember { mutableStateOf<List<GhCommit>>(emptyList()) }
-    var readme by remember { mutableStateOf<String?>(null) }
+    var readme by remember { mutableStateOf<Pair<String, String>?>(null) } // konten md + baseUrl gambar relatif
     var showHistory by remember { mutableStateOf(false) }
     var showReadme by remember { mutableStateOf(false) }
     var moveTarget by remember { mutableStateOf<GhNode?>(null) }
@@ -1589,19 +1589,22 @@ private fun CommitHistoryDialog(
 @Composable
 private fun ReadmeDialog(
     owner: String, name: String, branch: String,
-    preloaded: String?,
+    preloaded: Pair<String, String>?, // konten md + baseUrl gambar relatif
     onDismiss: () -> Unit
 ) {
-    var md by remember { mutableStateOf(preloaded) }
+    var md by remember { mutableStateOf(preloaded?.first) }
+    var mdBase by remember { mutableStateOf(preloaded?.second) }
     var loading by remember { mutableStateOf(preloaded == null) }
     var err by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(branch) {
         if (preloaded != null) return@LaunchedEffect
         try {
-            md = withContext(Dispatchers.IO) {
+            val data = withContext(Dispatchers.IO) {
                 GitHubApi.fetchReadme(Store.token.value, owner, name, branch)
             }
+            md = data?.first
+            mdBase = data?.second
         } catch (e: Exception) {
             err = GitHubApi.humanError(e)
         } finally {
@@ -1653,7 +1656,7 @@ private fun ReadmeDialog(
                         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                             .padding(horizontal = 20.dp, vertical = 12.dp)
                     ) {
-                        MarkdownText(md!!)
+                        MarkdownText(md!!, mdBase)
                         Spacer(Modifier.height(30.dp))
                     }
                 }

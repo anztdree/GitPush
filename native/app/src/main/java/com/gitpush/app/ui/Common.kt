@@ -1,6 +1,9 @@
 package com.gitpush.app.ui
 
+import android.content.Context
 import android.graphics.BitmapFactory
+import android.text.method.LinkMovementMethod
+import android.widget.TextView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -83,13 +86,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -97,6 +98,14 @@ import com.gitpush.app.data.GitHubApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import io.noties.markwon.AbstractMarkwonPlugin
+import io.noties.markwon.Markwon
+import io.noties.markwon.core.MarkwonTheme
+import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
+import io.noties.markwon.ext.tables.TablePlugin
+import io.noties.markwon.ext.tasklist.TaskListPlugin
+import io.noties.markwon.html.HtmlPlugin
+import io.noties.markwon.image.ImagesPlugin
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -807,106 +816,114 @@ fun VisibilityChip(isPrivate: Boolean) {
     }
 }
 
-// ---------- Markdown minimal ----------
+// ---------- Markdown render (Markwon: gambar, tabel, HTML, tautan klik) ----------
 
-/** Markdown inline: **tebal**, *miring*, `kode`, [teks](url) — dipakai MarkdownText. */
-fun inlineStyled(s: String): AnnotatedString = buildAnnotatedString {
-    val re = Regex("(\\*\\*[^*]+\\*\\*|\\*[^*\\s][^*]*\\*|`[^`]+`|\\[[^\\]]+\\]\\([^)\\s]+\\))")
-    var last = 0
-    for (m in re.findAll(s)) {
-        append(s.substring(last, m.range.first))
-        val tok = m.value
-        when {
-            tok.startsWith("**") -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                append(tok.substring(2, tok.length - 2))
-            }
-            tok.startsWith("*") -> withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) {
-                append(tok.substring(1, tok.length - 1))
-            }
-            tok.startsWith("`") -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, fontSize = 12.5.sp)) {
-                append(tok.substring(1, tok.length - 1))
-            }
-            else -> {
-                // link [teks](url) — tampil berwarna; url dibuka via klik di MarkdownText link handler
-                val label = tok.substringAfter('[').substringBefore(']')
-                withStyle(SpanStyle(color = BlueAccent, fontWeight = FontWeight.SemiBold)) {
-                    append(label)
-                }
-            }
-        }
-        last = m.range.last + 1
+/** URL relatif → absolut terhadap [baseUrl] (folder file .md di raw.githubusercontent). */
+private fun resolveMdUrl(url: String, baseUrl: String?): String {
+    val u = url.trim()
+    if (baseUrl == null || u.isEmpty()) return u
+    val lower = u.lowercase()
+    if (lower.startsWith("http://") || lower.startsWith("https://") ||
+        lower.startsWith("data:") || lower.startsWith("#") ||
+        lower.startsWith("mailto:") || lower.startsWith("ftp://") ||
+        lower.startsWith("file:")
+    ) return u
+    return try {
+        java.net.URL(java.net.URL(baseUrl), u).toString()
+    } catch (e: Exception) {
+        u
     }
-    append(s.substring(last))
 }
 
-@Composable
-fun MarkdownText(md: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val lines = md.lines()
-        var i = 0
-        while (i < lines.size) {
-            val line = lines[i]
-            val trimmed = line.trimStart()
-            when {
-                trimmed.startsWith("```") -> {
-                    val buf = StringBuilder()
-                    i++
-                    while (i < lines.size && !lines[i].trimStart().startsWith("```")) {
-                        buf.appendLine(lines[i])
-                        i++
-                    }
-                    i++
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            buf.toString().trimEnd(),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            modifier = Modifier.padding(10.dp).fillMaxWidth()
-                        )
-                    }
-                }
-                trimmed.startsWith("#") -> {
-                    val level = trimmed.takeWhile { it == '#' }.length
-                    val text = trimmed.dropWhile { it == '#' }.trim()
-                    Text(
-                        text,
-                        fontSize = when (level) {
-                            1 -> 21.sp
-                            2 -> 18.sp
-                            3 -> 16.sp
-                            else -> 15.sp
-                        },
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = if (level <= 2) 6.dp else 2.dp)
-                    )
-                    if (level <= 2) HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                }
-                trimmed.startsWith("- ") || trimmed.startsWith("* ") -> {
-                    Text(inlineStyled("• " + trimmed.drop(2)), fontSize = 14.sp, lineHeight = 20.sp)
-                }
-                trimmed.startsWith("!") && trimmed.startsWith("[") -> {
-                    Text("[gambar]", color = GrayMuted, fontSize = 13.sp)
-                }
-                Regex("^\\d+\\. ").containsMatchIn(trimmed) -> {
-                    Text(inlineStyled(trimmed), fontSize = 14.sp, lineHeight = 20.sp)
-                }
-                trimmed.startsWith(">") -> {
-                    Text(
-                        trimmed.drop(1).trim(),
-                        color = GrayMuted,
-                        fontSize = 13.sp,
-                        modifier = Modifier.padding(start = 10.dp)
-                    )
-                }
-                trimmed.isBlank() -> { }
-                else -> Text(inlineStyled(trimmed), fontSize = 14.sp, lineHeight = 20.sp)
+/** URL relatif di markdown (…](x.png)) dan atribut src/href HTML dijadikan absolut. */
+private fun preprocessMd(md: String, baseUrl: String?): String {
+    if (baseUrl == null) return md
+    var out = Regex("""(!?\[[^\]]*\]\()\s*([^)\s]+)((?:\s+"[^"]*")?\s*\))""")
+        .replace(md) { m -> "${m.groupValues[1]}${resolveMdUrl(m.groupValues[2], baseUrl)}${m.groupValues[3]}" }
+    out = Regex("""(<img\b[^>]*?\ssrc=")([^"]+)(")""", RegexOption.IGNORE_CASE)
+        .replace(out) { "${it.groupValues[1]}${resolveMdUrl(it.groupValues[2], baseUrl)}${it.groupValues[3]}" }
+    out = Regex("""(<a\b[^>]*?\shref=")([^"]+)(")""", RegexOption.IGNORE_CASE)
+        .replace(out) { "${it.groupValues[1]}${resolveMdUrl(it.groupValues[2], baseUrl)}${it.groupValues[3]}" }
+    return out
+}
+
+/** Markwon siap-pakai: warna mengikuti tema aplikasi. Panggil via remember (mahal). */
+private fun buildMarkwon(
+    ctx: Context,
+    muted: Int, link: Int, outline: Int, codeBg: Int,
+    tableEven: Int, tableHeader: Int
+): Markwon {
+    val d = ctx.resources.displayMetrics.density
+    fun px(v: Int) = (v * d).toInt()
+    return Markwon.builder(ctx)
+        .usePlugin(ImagesPlugin.create()) // gambar remote http(s)/data: + <img> HTML
+        .usePlugin(TablePlugin.create { t ->
+            t.tableBorderColor(outline)
+                .tableBorderWidth(px(1))
+                .tableCellPadding(px(6))
+                .tableEvenRowBackgroundColor(tableEven)
+                .tableHeaderRowBackgroundColor(tableHeader)
+        })
+        .usePlugin(StrikethroughPlugin.create())
+        .usePlugin(TaskListPlugin.create(ctx))
+        .usePlugin(HtmlPlugin.create()) // <img>, <b>, <sub>, <u>, dst.
+        .usePlugin(object : AbstractMarkwonPlugin() {
+            override fun configureTheme(builder: MarkwonTheme.Builder) {
+                builder
+                    .headingTextSizeMultipliers(floatArrayOf(1.5f, 1.3f, 1.15f, 1.0f, 0.95f, 0.9f))
+                    .headingBreakHeight(px(1))
+                    .headingBreakColor(outline)
+                    .linkColor(link)
+                    .isLinkUnderlined(false)
+                    .codeBlockBackgroundColor(codeBg)
+                    .codeBlockTextSize(px(12))
+                    .blockQuoteColor(muted)
+                    .blockQuoteWidth(px(3))
+                    .thematicBreakColor(outline)
+                    .thematicBreakHeight(px(1))
             }
-            i++
-        }
+        })
+        .build()
+}
+
+/**
+ * Markdown penuh via Markwon (TextView di Compose): heading, daftar bertingkat,
+ * tabel, gambar (URL relatif di-resolve terhadap [baseUrl]), HTML, strikethrough,
+ * task list, dan tautan bisa diklik. Dipakai dialog README, penampil file .md,
+ * isi issue, dan catatan release.
+ */
+@Composable
+fun MarkdownText(md: String, baseUrl: String? = null, modifier: Modifier = Modifier) {
+    val ctx = LocalContext.current
+    val cBody = MaterialTheme.colorScheme.onSurface
+    val cMuted = MaterialTheme.colorScheme.onSurfaceVariant
+    val cOutline = MaterialTheme.colorScheme.outline
+    val cCodeBg = MaterialTheme.colorScheme.surfaceVariant
+    val markwon = remember(cBody, cMuted, cOutline, cCodeBg) {
+        buildMarkwon(
+            ctx,
+            muted = cMuted.toArgb(),
+            link = BlueAccent.toArgb(),
+            outline = cOutline.toArgb(),
+            codeBg = cCodeBg.toArgb(),
+            tableEven = cCodeBg.copy(alpha = 0.4f).toArgb(),
+            tableHeader = cCodeBg.toArgb()
+        )
     }
+    val processed = remember(md, baseUrl) { preprocessMd(md, baseUrl) }
+    AndroidView(
+        modifier = modifier.fillMaxWidth(),
+        factory = { tctx ->
+            TextView(tctx).apply {
+                textSize = 14f
+                movementMethod = LinkMovementMethod.getInstance()
+                highlightColor = android.graphics.Color.TRANSPARENT
+                setPadding(0, 0, 0, 0)
+            }
+        },
+        update = { tv ->
+            tv.setTextColor(cBody.toArgb())
+            markwon.setMarkdown(tv, processed)
+        }
+    )
 }

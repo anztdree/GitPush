@@ -554,14 +554,26 @@ object GitHubApi {
             )
         }
 
-    suspend fun fetchReadme(token: String, owner: String, repo: String, ref: String): String? =
+    /**
+     * README repository: (konten markdown, baseUrl gambar/link relatif).
+     * baseUrl diambil dari download_url API (mis. https://raw.githubusercontent.com/o/r/branch/)
+     * supaya URL relatif di README bisa dirender sebagai gambar.
+     */
+    suspend fun fetchReadme(token: String, owner: String, repo: String, ref: String): Pair<String, String>? =
         withContext(Dispatchers.IO) {
-            try {
-                val o = call(token, "GET", "/repos/$owner/$repo/readme?ref=${Uri.encode(ref)}") ?: return@withContext null
-                val b64 = o.optString("content")
-                if (b64.isEmpty()) null else String(Base64.decode(b64, Base64.DEFAULT))
+            val o = try {
+                call(token, "GET", "/repos/$owner/$repo/readme?ref=${Uri.encode(ref)}")
             } catch (e: GhException) {
                 if (e.code == 404) null else throw e
+            }
+            val b64 = o?.optString("content")
+            if (o == null || b64.isNullOrEmpty()) {
+                null
+            } else {
+                val dl = o.optString("download_url")
+                val base = if (dl.isNotEmpty()) dl.substringBeforeLast('/') + "/"
+                else "https://raw.githubusercontent.com/$owner/$repo/$ref/"
+                String(Base64.decode(b64, Base64.DEFAULT)) to base
             }
         }
 

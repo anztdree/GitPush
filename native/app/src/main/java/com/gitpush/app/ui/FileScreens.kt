@@ -242,11 +242,15 @@ fun ViewerScreen(s: Screen.Viewer) {
                                     )
                                 }
                                 if (raw) RawText(text) else {
+                                    // URL relatif di .md di-resolve ke folder file ini di raw.githubusercontent
+                                    val mdDir = if (s.path.contains('/')) s.path.substringBeforeLast('/') else ""
+                                    val mdBase = "https://raw.githubusercontent.com/${s.owner}/${s.name}/${s.branch}" +
+                                        (if (mdDir.isEmpty()) "/" else "/$mdDir/")
                                     ResponsiveBox {
                                         Column(
                                             Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
                                         ) {
-                                            MarkdownText(text)
+                                            MarkdownText(text, mdBase)
                                             Spacer(Modifier.height(24.dp))
                                         }
                                     }

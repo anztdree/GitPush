@@ -12,7 +12,7 @@ android {
         applicationId = "com.gitpush.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 38
+        versionCode = 39
         versionName = "1.0"
     }
 
@@ -53,4 +53,13 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    // Render Markdown penuh (README.md, catatan release, isi issue):
+    // gambar remote, tabel, HTML (img/b/...), strikethrough, task list, tautan klik
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
+    implementation("io.noties.markwon:ext-strikethrough:4.6.2")
+    implementation("io.noties.markwon:ext-tasklist:4.6.2")
+    implementation("io.noties.markwon:html:4.6.2")
+    implementation("io.noties.markwon:image:4.6.2")
 }
