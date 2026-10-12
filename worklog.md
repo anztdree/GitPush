@@ -441,3 +441,18 @@ Work Log:
 Stage Summary:
 - origin/main = 32803d2 (versionCode 38); release "Versi Final (build 38)" terverifikasi.
 - Hapus-massal kini benar-benar "pilih beberapa file — baik file atau folder": centang campur, satu commit, ikon per jenis file konsisten.
+
+---
+Task ID: 38
+Agent: Z.ai Code (main)
+Task: Laporan user — "anda sepertinya lupa update source code nya, dan terlalu fokus ke releasenya" (curiga source code v38 tidak ikut diperbarui).
+
+Work Log:
+- AUDIT PENUH state v38: origin/main = aff1ccb (commit kode v38 = 32803d2 sudah ter-push ✓); tag v1.0 → 32803d2 (lokal + remote ✓); asset release sha256 e791e681 ≠ v37 2dcc4505 ✓; classes.dex APK berisi string baru "Hapus beberapa item" dan string lama "Hapus beberapa folder" SUDAH TIDAK ADA ✓; aapt badging versionCode 38 ✓; working tree == pushed ✓; GhNode.path terisi fetchContents ✓; fileInfo() ada di Common.kt ✓. KESIMPULAN: source code v38 BENAR-BENAR sudah diperbarui, ter-push, dan ter-bundle di APK.
+- AKAR MASALAH DITEMUKAN: BODY (deskripsi) release masih teks build 35 "Modern Light" — sejak v36 alur rilis hanya PATCH name + ganti asset, body tidak pernah ikut diperbarui → halaman release tampak "cuma ganti APK", user menyimpulkan source code tidak diubah.
+- FIX: PATCH /releases/398661211 → body baru changelog build 38 (hapus beberapa item: file & folder campur, 1 commit; ikon per jenis file; recap kosongkan repository build 37). Name/tag/asset tidak disentuh.
+- PELAJARAN UNTUK RILIS BERIKUTNYA: setiap rilis WAJIB ikut memperbarui body release (name saja tidak cukup).
+
+Stage Summary:
+- Release "Versi Final (build 38)" kini body-nya changelog build 38 (bukan build 35 lagi).
+- Bukti lengkap: source v38 = commit 32803d2 di main; APK release = build dari commit itu (dex string + versionCode 38 + sha256 e791e681 terverifikasi).
