@@ -260,3 +260,22 @@ Work Log:
 Stage Summary:
 - origin/main = b082575 (versionCode 27); Release v1.0 "Versi Final" berisi APK build 27 terverifikasi byte-per-byte; tag v1.0 = commit sumber terbaru.
 - Splash & login kini memakai logo launcher asli; upload punya browser folder tujuan ala cloud dengan path eksplisit + folder baru otomatis.
+
+---
+Task ID: 30
+Agent: Z.ai Code (main)
+Task: "Tidak Tidak... desain upload file kita saja sudah sangat salah" — bukan sekadar folder tujuan; SELURUH desain unggahan dirombak ala aplikasi cloud (Google Drive/Dropbox)
+
+Work Log:
+- Diagnosis desain salah: unggahan hidup di tab "Unggah" terpisah yang alurnya terbalik (pilih repo → branch → folder tujuan → baru pilih file). Aplikasi cloud sejati: jelajah folder → unggah DI SANA.
+- UploadScreen.kt (tab Unggah, 1.519 baris) DIHAPUS TOTAL — RepoPickerDialog & FolderPickerDialog ikut hilang (tidak diperlukan lagi: repo & folder = konteks layar yang sedang dibuka).
+- UploadSheet.kt BARU — ModalBottomSheet "Unggah ke folder ini" dibuka dari FAB di RepoScreen: kartu tujuan eksplisit (folder aktif, hijau), "Pilih file" (SAF multi) / "Pilih folder" (scanSafTree BFS) / "Telusuri File Manager HP" (FilePickerDialog bawaan), daftar pilihan (nama+ukuran+LFS+hapus), pesan commit opsional, tombol "Unggah N file" → UploadManager.start(targetFolder = path saat ini); plus "Folder baru" (putFile .gitkeep, 422 → refetch sha → perbarui) & "File baru" (editor) di folder aktif.
+- TransferCenter.kt BARU — UploadProgressPanel dipindah+ dipublikasikan; UploadTray = chip progres global melayang bawah layar di SEMUA tab (tampil saat active/showPanel; ikon+fase+repo+file i/n+bar mini; ketuk → UploadProgressDialog full panel: persen, kecepatan, ETA, retry, log langsung, batal, Coba Lagi gagal; FLAG_KEEP_SCREEN_ON pindah ke chip); helper SAF (queryDisplayName/querySize/mergePicked/scanSafTree/SafScan publik) ikut pindah.
+- RepoScreen: Box wrapper + ExtendedFloatingActionButton hijau "Unggah di sini" (BottomEnd, spacer list 24→88dp); LaunchedEffect auto-refresh — phase jadi "done" && repoFull cocok → folderCache.clear() + openDir(path) + loadRepoInfo(); teks repo kosong diperbarui.
+- MainActivity: tab "Unggah" DIHAPUS dari bottom bar (kini 4 tab: Beranda, Notifikasi, Pengaturan, Profil); UploadTry dipasang di MainScaffold Box (BottomCenter, sebelum OperationOverlay).
+- versionCode 28 (versionName tetap 1.0); README Versi: entri 28 ditulis (desain lama DIHAPUS, alur cloud baru), entri 27 diringkas jadi logo saja; build SUCCESSFUL (JAVA_HOME=/home/z/build-restore/jdk-21; 2 kali perbaikan compile: import Icon TransferCenter + SafScan publik + import UploadTray MainActivity); aapt: versionCode 28, versionName 1.0; APK 4.424.237 B; sha256 5eac5ed9f7b1fe47…
+- Push: percobaan pertama "remote rejected (failure)" (GitHub transient) → retry sukses 986b24d..5c01fb1; tag v1.0 dipindah ke 5c01fb1 (delete ref + recreate; PATCH draft:false langsung agar rilis tak menggantung jadi draft); PATCH release 398661211 judul & catatan lengkap v28; aset lama dihapus (id 633654817) → GitPush-v1.0.apk baru diunggah (state uploaded); verifikasi unduhan ulang: sha256 identik byte-per-byte.
+
+Stage Summary:
+- origin/main = 5c01fb1 (versionCode 28); Release v1.0 final berisi APK build 28 terverifikasi; tag v1.0 = commit sumber terbaru.
+- Desain unggahan kini ala aplikasi cloud sejati: TIDAK ADA lagi layar unggah terpisah — unggah = aksi di folder yang sedang dibuka (FAB "Unggah di sini"), progres berupa chip melayang global di semua layar, daftar folder auto-refresh setelah selesai.
