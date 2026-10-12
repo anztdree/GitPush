@@ -81,7 +81,14 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 28) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 29) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Unggah secepat terminal — paket git (versionCode 29):** keluhan "unggah 1 MB atau ratusan file terasa lama, padahal via terminal sangat cepat" akhirnya dijawab di akar masalahnya. Unggahan kini mencoba **jalur paket git** (protokol smart-HTTP yang sama dipakai `git push` di terminal): **semua file dikirim dalam SATU koneksi** sebagai packfile biner terkompresi zlib — tanpa request per-file, tanpa jeda anti-limit, tanpa base64. Ratusan file kecil selesai dalam hitungan detik, bukan menit. Detail pentingnya:
+- **Deteksi "up-to-date" ala git**: setiap file dihitung sha blob-nya di HP; file yang isinya **sudah ada di repo tidak dikirim ulang sama sekali** (dilewati dengan catatan jelas di log) — unggah ulang folder yang sama nyaris instan.
+- **Isi sama = hemat kirim**: file berisi byte yang sama dengan objek lain di repo cukup dirujuk sha-nya, tanpa mengirim isi.
+- **Fallback otomatis & transparan**: bila jalur paket tidak tersedia (izin token, jaringan tidak stabil), proses beralih sendiri ke jalur API blob lama yang terbukti andal — log menjelaskan alasan peralihannya; tidak ada unggahan yang gagal total karena jalur.
+- **File besar (>95 MB) tetap otomatis via Git LFS** (pointer ikut dalam commit), dan **file 150 MB pun jalan** — aplikasi **tanpa batas jumlah file** (500 file kecil? silakan) dan tanpa batas ukuran selain aturan GitHub sendiri.
+- **Log unggahan dibaca jelas**: tahap bernomor (ANALISIS → CEK ISI REPO → UNGGAH → COMMIT), per-file dengan jalurnya (paket/LFS/blob/identik), serta **ringkasan akhir** rapi: berapa file baru, identik, LFS, gagal, jalur yang dipakai, durasi, dan kecepatan.
 
 **Unggah dirancang ulang total ala aplikasi cloud (versionCode 28):** desain lama yang salah — tab **Unggah** terpisah yang membuang file ke root — **DIHAPUS**. Sekarang unggahan adalah aksi **di dalam folder yang sedang dibuka**: jelajahi repository → masuk ke folder tujuan → ketuk tombol hijau **"Unggah di sini"** → pilih file/folder dari HP (SAF multi-pilih, pindai pohon folder, atau File Manager bawaan) → file masuk **TEPAT di folder itu** dalam 1 commit. Sheet unggahan menampilkan folder tujuan secara eksplisit, daftar file yang dipilih, pesan commit opsional, plus aksi **Folder baru** dan **File baru** di folder tersebut. Selama mengunggah, **chip progres** melayang di bawah layar di halaman mana pun (bisa terus menjelajah) — ketuk untuk membuka panel progres lengkap: persentase, kecepatan, ETA, log langsung, batal, dan *Coba Lagi* file gagal. Daftar folder otomatis **menyegarkan diri** begitu unggahan selesai.
 

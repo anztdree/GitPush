@@ -90,6 +90,11 @@ object UploadManager {
     )
     private var lastRun: RunParams? = null
 
+    /** Path yang sudah dihitung "Selesai" — mencegah hitung ganda saat jalur cepat gagal
+     *  di tengah lalu pengiriman diulang lewat jalur API (progres byte mulai dari nol,
+     *  tapi penghitung file TIDAK boleh naik dua kali untuk file yang sama). */
+    private val donePaths = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var job: Job? = null
     private val cancelled = AtomicBoolean(false)
@@ -214,10 +219,12 @@ object UploadManager {
         synchronized(evLock) { events.clear() }
         logLines = emptyList()
         stallSec = 0L
+        donePaths.clear()
         logEvent(
             (if (isRetry) "MULAI (COBA ULANG): " else "MULAI: ") +
                 "${files.size} file (${formatBytes(files.sumOf { it.size })}) → $repoFullName@$branch"
         )
+        logEvent("Tanpa batas jumlah/ukuran file — jalur cepat paket git dicoba dulu, gagal → otomatis jalur API")
         // Jenis jaringan utk diagnosa (Wi-Fi vs data seluler — perilaku unggahan beda jauh)
         try {
             val appCtx = context?.applicationContext
@@ -311,12 +318,24 @@ object UploadManager {
                         retryMsg = null // ada kemajuan → bukan sedang mengulang
                     },
                     onFileDone = { p, sz ->
-                        filesDone += 1
-                        actives.remove(p)
-                        lastProg.remove(p)
-                        snapshot()
-                        retryMsg = null
-                        logEvent("✓ Selesai: ${p.substringAfterLast('/')} (${formatBytes(sz)})")
+                        if (donePaths.add(p)) {
+                            filesDone += 1
+                            actives.remove(p)
+                            lastProg.remove(p)
+                            snapshot()
+                            retryMsg = null
+                            logEvent("✓ Selesai: ${p.substringAfterLast('/')} (${formatBytes(sz)})")
+                        }
+                    },
+                    onFileUnchanged = { p, sz ->
+                        // Identik dengan isi repo — tidak dikirim ulang (persis git "up-to-date")
+                        if (donePaths.add(p)) {
+                            filesDone += 1
+                            actives.remove(p)
+                            lastProg.remove(p)
+                            snapshot()
+                            logEvent("• ${p.substringAfterLast('/')} (${formatBytes(sz)}) — sudah ada di repo, tidak dikirim ulang")
+                        }
                     },
                     onFileSkipped = { p, sz, reason ->
                         skipped = skipped + (p to reason)
@@ -349,8 +368,14 @@ object UploadManager {
                     onLog = { msg -> logEvent(msg) },
                     isCancelled = { cancelled.get() }
                 )
+                val u = Store.user.value
+                val aLogin = u?.login ?: owner
+                val aName = u?.name?.takeIf { s -> s.isNotBlank() } ?: aLogin
                 val res: UploadResult = withContext(Dispatchers.IO) {
-                    GitHubApi.bulkUpload(token, owner, repo, branch, files2, message, resolver, hooks)
+                    GitHubApi.bulkUpload(
+                        token, owner, repo, branch, files2, message, resolver, hooks,
+                        authorLogin = aLogin, authorName = aName
+                    )
                 }
                 elapsedMs = System.currentTimeMillis() - started
                 commitSha = res.commitSha
@@ -363,7 +388,25 @@ object UploadManager {
                 if (failedFiles.isNotEmpty()) {
                     logEvent("${failedFiles.size} file gagal — tetap tersimpan, bisa dicoba ulang (tombol Coba Lagi)")
                 }
-                logEvent("SELESAI: ${res.uploaded} file masuk commit ${res.commitSha.take(10)} (durasi ${(res.elapsedMs + 999) / 1000} dtk)")
+                // RINGKASAN AKHIR yang terbaca jelas (permintaan user: log harus jelas)
+                val jalur = when {
+                    res.viaPack > 0 && res.viaBlob == 0 -> "paket git (1 koneksi)"
+                    res.viaPack > 0 -> "campuran"
+                    res.viaBlob > 0 -> "API blob"
+                    else -> "tanpa kirim baru"
+                }
+                val rincian = mutableListOf<String>()
+                if (res.viaPack > 0) rincian.add("baru ${res.viaPack}")
+                if (res.viaBlob > 0) rincian.add("blob API ${res.viaBlob}")
+                if (res.viaLfs > 0) rincian.add("LFS ${res.viaLfs}")
+                if (res.unchanged > 0) rincian.add("identik ${res.unchanged}")
+                if (failedFiles.isNotEmpty()) rincian.add("gagal ${failedFiles.size}")
+                val durasi = (res.elapsedMs + 999) / 1000
+                val sp = if (durasi > 0) bytesTotal / durasi else 0L
+                logEvent(
+                    "SELESAI: ${res.uploaded}/${filesTotal} file masuk commit ${res.commitSha.take(10)} " +
+                        "— ${rincian.joinToString(" · ")} — jalur $jalur — $durasi dtk (${formatBytes(sp)}/dtk)"
+                )
                 GitHubApi.invalidateUsage(owner, repo) // kuota Beranda/Upload dihitung ulang
                 Store.log("upload", "Upload ${res.uploaded} file (1 commit)", repoFullName)
             } catch (e: CancellationException) {
