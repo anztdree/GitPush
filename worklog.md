@@ -456,3 +456,23 @@ Work Log:
 Stage Summary:
 - Release "Versi Final (build 38)" kini body-nya changelog build 38 (bukan build 35 lagi).
 - Bukti lengkap: source v38 = commit 32803d2 di main; APK release = build dari commit itu (dex string + versionCode 38 + sha256 e791e681 terverifikasi).
+
+---
+Task ID: 39
+Agent: Z.ai Code (main)
+Task: "sentuhan akhir final, bagian tombol readme.md tidak merender tulisan md dengan benar, sehingga terbaca dalam bentuk mentahnya" — render markdown README secara penuh.
+
+Work Log:
+- Diagnosa: MarkdownText lama (Common.kt) parser buatan sendiri yang naif — gambar hanya placeholder "[gambar]", tabel & HTML (&lt;img&gt;, badge) tampil mentah, daftar tidak bertingkat, tautan tidak bisa diklik. Dipakai di 5 tempat: dialog README, penampil file .md, isi issue, catatan release.
+- Solusi: ganti dengan **Markwon 4.6.2** (TextView via AndroidView) — core + ext-tables + ext-strikethrough + ext-tasklist + html + image. Semua artefak diverifikasi langsung di Maven Central sebelum dipasang (POM + isi AAR); ImagesPlugin.create() bawaan sudah menangani data:/http(s); HtmlPlugin punya ImageHandler untuk &lt;img&gt;.
+- Common.kt: MarkdownText(md, baseUrl, modifier) baru — buildMarkwon() (heading multiplier, garis judul, tabel bergaris + padding, blockquote, thematic break, link biru tanpa underline, warna dari MaterialTheme via toArgb), preprocessMd() memecahkan URL relatif (link markdown + atribut src/href HTML) terhadap baseUrl; AndroidView TextView + LinkMovementMethod. inlineStyled dihapus + import bersih.
+- GitHubApi.fetchReadme kini kembalikan Pair (konten, baseUrl dari download_url API; fallback raw.githubusercontent.com/o/r/ref/). Restrukturisasi tanpa "return@withContext null" (quirk inferensi Kotlin dengan Pair: "actual Pair<String,String?>?, expected …") — dua kali build gagal sebelum ketemu pola yang benar.
+- ReadmeDialog (RepoScreen) & penampil .md (FileScreens) kirim baseUrl; state readme → Pair<String,String>?. FileScreens menghitung base dari folder file (raw.githubusercontent.com/o/r/branch/dir/).
+- proguard-rules.pro: AAR Markwon TIDAK membawa consumer rules → -keep io.noties.markwon.** + -dontwarn (modul image referensi kelas svg/gif opsional yang tidak ada).
+- versionCode 38→39; README entri v39; build SUCCESSFUL 4m30s — APK 4.779.543 B (naik ~257 KB karena Markwon), sha256 cbc7c1ade0ad333d…, aapt versionCode 39, DEX berisi 423 referensi markwon.
+- Rilis: commit 36fc590 push main; tag -f v1.0 → 36fc590; PATCH release 398661211 name "Versi Final (build 39)" + BODY BARU changelog build 39 (pelajaran Task 38 dipakai!); asset lama 635001729 DELETE 204; upload id 635139702; unduh ulang octet-stream → sha256 IDENTIK.
+
+Stage Summary:
+- origin/main = 36fc590 (versionCode 39); tag v1.0 = 36fc590; release "Versi Final (build 39)" name+body+asset terverifikasi sha256 cbc7c1ade0ad333d….
+- README.md, file .md apa pun, catatan release, dan isi issue kini dirender penuh: gambar (termasuk URL relatif), tabel, HTML, task list, tautan klik — sesuai tema aplikasi.
+- PELAJARAN: ① Markwon AAR tanpa consumer rules → wajib -keep + -dontwarn sendiri saat minifyEnabled; ② "return@withContext null" + Pair bikin inferensi gagal — hindari label-return null di withContext bertipe Pair; ③ download_url API readme = sumber baseUrl paling akurat untuk URL relatif.
