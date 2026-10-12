@@ -660,9 +660,25 @@ fun RepoScreen(s: Screen.Repo) {
                 }
                 if ((realUsage ?: 0L) > 0L || (repoInfo?.sizeKb ?: 0L) > 0L) {
                     item {
+                        // Ringkasan penyimpanan terpakai — TANPA batas kuota (permintaan pengguna)
                         Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-                            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
-                                QuotaBar(usedBytes = realUsage ?: (repoInfo?.sizeKb ?: 0L) * 1024)
+                            Row(
+                                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Penyimpanan terpakai",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    formatBytes(realUsage ?: (repoInfo?.sizeKb ?: 0L) * 1024),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = GreenPrimary
+                                )
                             }
                         }
                     }

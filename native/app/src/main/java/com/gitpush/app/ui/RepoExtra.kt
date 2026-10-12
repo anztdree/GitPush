@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CallMerge
 import androidx.compose.material.icons.filled.Check
@@ -1117,7 +1118,12 @@ private fun EditReleaseDialog(
     )
 }
 
-/** Dialog buat rilis baru: tag (otomatis dibuat bila belum ada), judul, catatan, prarilis. */
+/**
+ * Dialog buat rilis baru: tag (otomatis dibuat bila belum ada), judul, catatan,
+ * prarilis + LAMPIRAN FILE — file yang dipilih diunggah sebagai aset SEKETIKA
+ * setelah rilis dibuat (permintaan pengguna: "saat membuat release seketika itu
+ * juga tidak bisa tambahkan file").
+ */
 @Composable
 private fun CreateReleaseDialog(
     owner: String, name: String,
@@ -1125,14 +1131,29 @@ private fun CreateReleaseDialog(
     onCreated: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
     var tag by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
     var body by remember { mutableStateOf("") }
     var prerelease by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var err by remember { mutableStateOf<String?>(null) }
+    var stage by remember { mutableStateOf("") } // teks progres di tombol saat sibuk
+    // Lampiran: (Uri, nama file, ukuran byte) — diunggah sbg aset setelah rilis dibuat
+    var attachments by remember { mutableStateOf<List<Triple<Uri, String, Long>>>(emptyList()) }
 
     val tagValid = tag.isNotBlank() && !tag.contains(' ') && !tag.contains("..")
+
+    // Pilih 1+ file dari penyimpanan; nama yang sudah ada di daftar diabaikan (hindari duplikat)
+    val pickAttachments = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            attachments = attachments + uris.mapNotNull { u ->
+                queryUriName(ctx, u)?.let { Triple(u, it, queryUriSize(ctx, u)) }
+            }.filterNot { add -> attachments.any { it.second == add.second } }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
@@ -1170,6 +1191,40 @@ private fun CreateReleaseDialog(
                     "Tandai sebagai prarilis", "Versi pra-rilis / uji coba",
                     prerelease, enabled = !busy
                 ) { prerelease = it }
+                Spacer(Modifier.height(14.dp))
+                // ===== Lampiran file: diunggah SEKETIKA setelah rilis dibuat =====
+                OutlinedButton(
+                    onClick = { pickAttachments.launch(arrayOf("*/*")) },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.UploadFile, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        if (attachments.isEmpty()) "Tambah file lampiran (opsional)"
+                        else "Tambah file lain • ${attachments.size} terpilih",
+                        fontSize = 13.sp
+                    )
+                }
+                attachments.forEach { (u, nm, sz) ->
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.AttachFile, contentDescription = null, tint = GrayMuted, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(nm, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(formatBytes(sz), fontSize = 10.5.sp, color = GrayMuted)
+                        }
+                        IconButton(
+                            onClick = { attachments = attachments.filterNot { it.first == u } },
+                            enabled = !busy, modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(Icons.Filled.Close, contentDescription = "Batal lampir $nm", tint = RedDanger, modifier = Modifier.size(14.dp))
+                        }
+                    }
+                }
                 if (err != null) {
                     Spacer(Modifier.height(8.dp))
                     Text(err!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
@@ -1183,11 +1238,46 @@ private fun CreateReleaseDialog(
                     scope.launch {
                         busy = true; err = null
                         try {
-                            withContext(Dispatchers.IO) {
+                            val rel = withContext(Dispatchers.IO) {
                                 GitHubApi.createRelease(
                                     Store.token.value, owner, name,
                                     tag, title, body.trim(), prerelease, ""
                                 )
+                            }
+                            // ===== Unggah lampiran seketika setelah rilis jadi =====
+                            var ok = 0
+                            var lastErr: String? = null
+                            attachments.forEachIndexed { idx, (u, nm, sz) ->
+                                stage = "Mengunggah ${idx + 1}/${attachments.size}…"
+                                Store.showOp(
+                                    if (attachments.size > 1) "Mengunggah lampiran ${idx + 1}/${attachments.size}"
+                                    else "Mengunggah lampiran rilis",
+                                    nm
+                                )
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        GitHubApi.uploadReleaseAsset(
+                                            Store.token.value, owner, name, rel.id, nm, sz,
+                                            openStream = {
+                                                ctx.contentResolver.openInputStream(u)
+                                                    ?: throw java.io.IOException("File tidak dapat dibuka")
+                                            },
+                                            onProgress = { done, total -> Store.opProgress(done, total) }
+                                        )
+                                    }
+                                    Store.log("upload", "Lampiran rilis $nm ke ${rel.tagName}", "$owner/$name")
+                                    ok++
+                                } catch (e: Exception) {
+                                    lastErr = GitHubApi.humanError(e)
+                                }
+                            }
+                            Store.hideOp()
+                            if (lastErr != null && ok < attachments.size) {
+                                Toast.makeText(
+                                    ctx,
+                                    "Rilis ${rel.tagName} dibuat, tetapi ${attachments.size - ok} file gagal: $lastErr",
+                                    Toast.LENGTH_LONG
+                                ).show()
                             }
                             onCreated()
                         } catch (e: Exception) {
@@ -1200,8 +1290,9 @@ private fun CreateReleaseDialog(
                 if (busy) {
                     CircularProgressIndicator(modifier = Modifier.size(15.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(8.dp))
-                    Text("Membuat…")
-                } else Text("Buat rilis")
+                    Text(if (stage.isBlank()) "Membuat…" else stage)
+                } else if (attachments.isEmpty()) Text("Buat rilis")
+                else Text("Buat rilis + ${attachments.size} file")
             }
         },
         dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Batal") } }

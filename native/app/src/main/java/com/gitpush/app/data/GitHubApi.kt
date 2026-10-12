@@ -331,7 +331,7 @@ object GitHubApi {
         parseRepo(o)
     }
 
-    /** Detail satu repository (untuk kuota penyimpanan 2 GB, dsb). */
+    /** Detail satu repository (ukuran penyimpanan, dsb). */
     suspend fun fetchRepo(token: String, owner: String, name: String): GhRepo =
         withContext(Dispatchers.IO) {
             val o = call(token, "GET", "/repos/$owner/$name")

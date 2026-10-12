@@ -33,7 +33,7 @@ data class GhRepo(
     val issues: Int,
     val defaultBranch: String,
     val updatedAt: String,
-    val sizeKb: Long = 0, // ukuran repository (KB) dari API — untuk kuota 2 GB
+    val sizeKb: Long = 0, // ukuran repository (KB) dari API
     val homepage: String? = null,
     val watchers: Int = 0
 )

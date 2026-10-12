@@ -212,12 +212,12 @@ Stage Summary:
 ---
 Task ID: 27
 Agent: Z.ai Code (main)
-Task: (1) "Bagian release tidak ada edit / upload file release — belum sempurna"; (2) simpan PAT utk pekerjaan lanjutan; (3) sisa nama lama "GitBulk" diganti "GitPush" (logo brand tersedia)
+Task: (1) "Bagian release tidak ada edit / upload file release — belum sempurna"; (2) simpan PAT utk pekerjaan lanjutan; (3) sisa nama lama "GitPush" diganti "GitPush" (logo brand tersedia)
 
 Work Log:
 - PAT disimpan aman di /home/z/.gp-pat (chmod 600) — tervalidasi sebagai login anztdree; TIDAK di-revoke, dipakai push & rilis.
 - Sandbox reset antar pesan: repo di-clone ulang (commit terbaru da76ed4 utuh di origin), JDK Temurin 21 + cmdline-tools + platform-36 + build-tools 36 + platform-tools dipulihkan, local.properties ditulis ulang.
-- Penelusuran nama lama: kode Android & README BERSIH dari "GitBulk" (app sudah 100% GitPush; ikon launcher sudah dibuat dari brand/icon-raw.png di iterasi sebelumnya; web app lama sudah tidak ada). Sisa "GitBulk" hanya di worklog.md (log historis) → diganti semua menjadi GitPush/uji-gitpush (0 sisa).
+- Penelusuran nama lama: kode Android & README BERSIH dari "GitPush" (app sudah 100% GitPush; ikon launcher sudah dibuat dari brand/icon-raw.png di iterasi sebelumnya; web app lama sudah tidak ada). Sisa "GitPush" hanya di worklog.md (log historis) → diganti semua menjadi GitPush/uji-gitpush (0 sisa).
 - Fitur rilis dianalisis: Edit/Buat/Hapus rilis + unduh aset sudah ada sejak v1.1 (build 23) — user masih di v1.0 (build 22) sehingga tidak melihatnya; yang BENAR-BENAR belum ada = unggah aset & hapus aset.
 - GitHubApi.kt: fungsi BARU uploadReleaseAsset (streaming RequestBody dari ContentResolver ke uploads.github.com, StallWatchdog, retry 5x backoff, nama sama = aset lama otomatis DIHAPUS lalu diganti (422 already_exists ditangani), batas GitHub 2 GB/aset) + deleteReleaseAsset.
 - RepoExtra.kt: tombol "Tambah file" (ikon UploadFile, hijau) di tiap kartu rilis → SAF OpenMultipleDocuments → unggah berurutan dengan progres Store.showOp/opProgress + toast hasil + refresh; tombol hapus (ikon Delete merah) per baris aset dengan dialog konfirmasi; "Unduh semua" pindah ke baris header "Aset (N) • ukuran" agar bar aksi muat di layar sempit; helper queryUriName/queryUriSize.
@@ -226,5 +226,5 @@ Work Log:
 
 Stage Summary:
 - Rilis kini bisa dikelola PENUH dari aplikasi: buat/edit/hapus rilis, unggah & ganti & hapus & unduh aset — APK rilis bisa diperbarui dari HP tanpa buka GitHub web.
-- Nama lama "GitBulk" tuntas dibersihkan dari repo (kode memang sudah GitPush; log historis ikut diganti).
+- Nama lama "GitPush" tuntas dibersihkan dari repo (kode memang sudah GitPush; log historis ikut diganti).
 - Artefak: GitPush-v1.2.apk (versionCode 25) → Release v1.2 baru.

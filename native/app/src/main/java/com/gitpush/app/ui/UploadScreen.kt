@@ -348,10 +348,6 @@ fun UploadScreen() {
             upActive -> { }
             r == null -> toast("Pilih repository dulu")
             picked.isEmpty() -> toast("Pilih file atau folder dulu")
-            repoUsedBytes + pickedBytes > REPO_QUOTA_BYTES -> toast(
-                "Melebihi kuota 2 GB per repository — terpakai ${formatBytes(repoUsedBytes)}, " +
-                    "pilihan ${formatBytes(pickedBytes)}, sisa kuota ${formatBytes((REPO_QUOTA_BYTES - repoUsedBytes).coerceAtLeast(0))}"
-            )
             else -> {
                 val message = msg.ifBlank { "Tambah ${picked.size} file via GitPush" }
                 UploadManager.start(
@@ -372,7 +368,6 @@ fun UploadScreen() {
 
     val lfsCount = picked.count { it.size > GitHubApi.LFS_THRESHOLD_BYTES }
     val pickedBytes = picked.sumOf { it.size }
-    val overQuota = repoUsedBytes + pickedBytes > REPO_QUOTA_BYTES
     val showForm = !upActive
 
     Column(Modifier.fillMaxSize()) {
@@ -457,23 +452,36 @@ fun UploadScreen() {
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(10.dp))
-                        // ===== Kuota penyimpanan ala penyimpanan awan (2 GB / repo) =====
+                        // Ringkasan penyimpanan terpakai — TANPA batas kuota (permintaan pengguna)
                         Surface(
                             color = MaterialTheme.colorScheme.surface,
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                                QuotaBar(usedBytes = repoUsedBytes, extraBytes = pickedBytes, compact = true)
-                                if (overQuota) {
-                                    Spacer(Modifier.height(4.dp))
+                            Row(
+                                Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
                                     Text(
-                                        "Melebihi kuota 2 GB — kurangi file yang dipilih.",
-                                        color = RedDanger,
+                                        "Penyimpanan repository terpakai",
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp
+                                    )
+                                    Text(
+                                        if (pickedBytes > 0)
+                                            "${formatBytes(repoUsedBytes)} + pilihan ${formatBytes(pickedBytes)}"
+                                        else "${formatBytes(repoUsedBytes)} terpakai",
                                         fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                                Text(
+                                    formatBytes(repoUsedBytes + pickedBytes),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = GreenPrimary
+                                )
                             }
                         }
                     }
