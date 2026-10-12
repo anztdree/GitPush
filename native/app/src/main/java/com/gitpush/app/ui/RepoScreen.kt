@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderDelete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
@@ -129,6 +130,7 @@ fun RepoScreen(s: Screen.Repo) {
     var showRepoMenu by remember { mutableStateOf(false) }
     var deleteRepoDialog by remember { mutableStateOf(false) }
     var emptyRepoDialog by remember { mutableStateOf(false) }
+    var multiDeleteDialog by remember { mutableStateOf(false) }
     var repoInfo by remember { mutableStateOf<GhRepo?>(null) }
     var dirSizes by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     var dirCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
@@ -552,6 +554,21 @@ fun RepoScreen(s: Screen.Repo) {
                     }
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                DropdownMenuItem(
+                    text = { Text("Hapus beberapa folder…", color = RedDanger) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.FolderDelete,
+                            contentDescription = null,
+                            tint = RedDanger,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    onClick = {
+                        showRepoMenu = false
+                        multiDeleteDialog = true
+                    }
+                )
                 DropdownMenuItem(
                     text = { Text("Kosongkan repository", color = RedDanger) },
                     leadingIcon = {
@@ -1034,6 +1051,24 @@ fun RepoScreen(s: Screen.Repo) {
                 path = ""
                 Store.lastRepoPath["${s.fullName}@${branch}"] = ""
                 openDir("")
+                reloadMeta()
+                loadRepoInfo()
+            }
+        )
+    }
+
+    if (multiDeleteDialog) {
+        MultiDeleteDialog(
+            owner = s.owner,
+            name = s.name,
+            branch = branch,
+            dirPath = path,
+            onDismiss = { multiDeleteDialog = false },
+            onDeleted = {
+                multiDeleteDialog = false
+                // Folder terpilih hilang: bersihkan cache lalu muat ulang lokasi sekarang
+                folderCache.clear()
+                openDir(path)
                 reloadMeta()
                 loadRepoInfo()
             }

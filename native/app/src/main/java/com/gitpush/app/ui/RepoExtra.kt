@@ -9,8 +9,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Merge
 import androidx.compose.material.icons.filled.Public
@@ -46,6 +49,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -67,6 +71,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -118,7 +123,7 @@ fun EmptyRepoDialog(
         text = {
             Column {
                 Text(
-                    "Semua file di $owner/$name (branch \"$branch\") akan dihapus dalam satu commit. Tindakan ini tidak bisa dibatalkan.",
+                    "Semua file di $owner/$name (branch \"$branch\") akan dihapus, dan SELURUH riwayat commit branch ini ikut habis — tinggal satu commit saja. Tindakan ini tidak bisa dibatalkan.",
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -138,7 +143,7 @@ fun EmptyRepoDialog(
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            "Riwayat commit, tag, dan RELEASE tetap utuh — tidak ikut terhapus.",
+                            "RELEASE tetap tersimpan — aset rilis tetap bisa dilihat & diunduh seperti biasa.",
                             fontSize = 12.sp,
                             lineHeight = 16.sp,
                             color = GreenPrimary
@@ -194,6 +199,164 @@ fun EmptyRepoDialog(
                     CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                 } else {
                     Text("Kosongkan sekarang")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Batal") }
+        }
+    )
+}
+
+// ============================================================
+// ===== HAPUS BEBERAPA FOLDER — centang, hapus, 1 commit =====
+// ============================================================
+
+/**
+ * Dialog hapus BEBERAPA folder sekaligus: daftar folder pada [dirPath] dengan kotak
+ * centang, lalu semua folder terpilih dihapus dalam SATU commit.
+ */
+@Composable
+fun MultiDeleteDialog(
+    owner: String,
+    name: String,
+    branch: String,
+    dirPath: String,
+    onDismiss: () -> Unit,
+    onDeleted: (Int) -> Unit
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var folders by remember { mutableStateOf<List<String>?>(null) } // null = masih memuat
+    var selected by remember { mutableStateOf(emptySet<String>()) }
+    var loadErr by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(dirPath, branch) {
+        try {
+            val nodes = withContext(Dispatchers.IO) {
+                GitHubApi.fetchContents(Store.token.value, owner, name, dirPath, branch)
+            }
+            folders = nodes.filter { it.type == "dir" }.map { it.name }
+        } catch (e: Exception) {
+            loadErr = GitHubApi.humanError(e)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        title = { Text("Hapus beberapa folder?", fontWeight = FontWeight.Bold, fontSize = 17.sp) },
+        text = {
+            Column {
+                Text(
+                    "Centang folder yang ingin dihapus beserta seluruh isinya — semua dihapus dalam satu commit.",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                when {
+                    loadErr != null -> Text(
+                        "Gagal memuat folder: $loadErr",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp
+                    )
+                    folders == null -> Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+                    ) {
+                        CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text("Memuat folder…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    folders!!.isEmpty() -> Text(
+                        "Tidak ada folder di lokasi ini.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    else -> {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            folders!!.forEach { f ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable(enabled = !busy) {
+                                            selected = if (f in selected) selected - f else selected + f
+                                        }
+                                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                                ) {
+                                    Checkbox(checked = f in selected, onCheckedChange = null, enabled = !busy)
+                                    Icon(
+                                        Icons.Filled.Folder,
+                                        contentDescription = null,
+                                        tint = FilePalette.Folder,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                    Spacer(Modifier.width(9.dp))
+                                    Text(f, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                        TextButton(
+                            onClick = {
+                                selected = if (selected.size == folders!!.size) emptySet() else folders!!.toSet()
+                            },
+                            enabled = !busy,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                if (selected.size == folders!!.size) "Batal pilih semua"
+                                else "Pilih semua (${folders!!.size})",
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+                if (error != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(error!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    busy = true
+                    error = null
+                    val targets = selected.map { if (dirPath.isEmpty()) it else "$dirPath/$it" }
+                    scope.launch {
+                        try {
+                            val (_, count) = withContext(Dispatchers.IO) {
+                                GitHubApi.deleteFolders(Store.token.value, owner, name, branch, targets)
+                            }
+                            Store.log("delete", "Hapus ${targets.size} folder ($count file)", "$owner/$name")
+                            Toast.makeText(ctx, "${targets.size} folder dihapus — $count file ✓", Toast.LENGTH_LONG).show()
+                            onDeleted(count)
+                        } catch (e: Exception) {
+                            error = GitHubApi.humanError(e)
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+                enabled = selected.isNotEmpty() && !busy,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = RedDanger,
+                    contentColor = Color.White
+                )
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                } else {
+                    Text(if (selected.isEmpty()) "Hapus" else "Hapus ${selected.size} folder")
                 }
             }
         },

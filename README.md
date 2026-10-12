@@ -81,7 +81,12 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 36) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 37) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+
+**Perbaikan error 422 & "Kosongkan" kini menghabiskan riwayat juga + hapus beberapa folder sekaligus (versionCode 37):** tindak lanjut dari pemakaian nyata:
+- **Error "data invalid 422" saat Kosongkan repository — DIPERBAKI.** Akar masalah: GitHub menolak pembuatan *tree* kosong via endpoint `git/trees` (respons 422 *Invalid tree info*). Solusinya: aplikasi kini memakai **tree kosong bawaan git** (`4b825dc…4904`) yang selalu dikenal git tanpa perlu dibuat — fitur kosongkan kini berjalan mulus. Sudah diuji langsung ke API GitHub sebelum dirilis.
+- **Riwayat commit kini ikut terhapus saat Kosongkan** — sesuai permintaan, yang tersisa hanyalah **RELEASE**. Kosongkan membuat *commit orphan* (commit baru tanpa induk) berisi tree kosong, lalu memaksa branch ke commit tersebut: daftar file jadi 0 dan halaman riwayat commit branch tinggal 1 commit. Tag & release tidak tersentuh — aset rilis tetap bisa dilihat dan diunduh seperti biasa (terverifikasi: unduhan arsip source dari tag lama tetap berfungsi).
+- **Fitur baru "Hapus beberapa folder…"** — di menu titik-tiga halaman repository (zona merah). Muncul dialog berisi daftar semua folder di lokasi saat ini dengan kotak centang: centang satu, beberapa, atau tekan "Pilih semua", lalu tombol merah menghapus semuanya **dalam satu commit** (bukan satu per satu). Daftar bisa dimuat dari folder mana pun — buka folder dulu, lalu pilih folder-folder di dalamnya yang mau dihapus.
 
 **Kosongkan repository dalam satu ketukan — release tetap aman (versionCode 36):** fitur baru yang sering diminta pengguna penyimpanan:
 - **Menu "Kosongkan repository"** di menu titik-tiga halaman repository (dikelompokkan bersama "Hapus repository" di zona merah). Cocok saat Anda ingin mengulang isi repo dari nol tanpa menghapus repository-nya.
