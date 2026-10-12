@@ -6,14 +6,20 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Notifications
@@ -24,9 +30,6 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,7 +41,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,6 +67,8 @@ import com.gitpush.app.ui.SettingsScreen
 import com.gitpush.app.ui.Store
 import com.gitpush.app.ui.UploadTray
 import com.gitpush.app.ui.ViewerScreen
+import com.gitpush.app.ui.cardBorder
+import com.gitpush.app.ui.cardShadow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -182,50 +189,89 @@ fun MainScaffold() {
 @Composable
 private fun BottomBar() {
     val tab = Store.tab.value
-    val colors = NavigationBarItemDefaults.colors(
-        selectedIconColor = GreenPrimary,
-        indicatorColor = GreenPrimary.copy(alpha = 0.14f),
-        selectedTextColor = MaterialTheme.colorScheme.onSurface,
-        unselectedIconColor = GrayMuted,
-        unselectedTextColor = GrayMuted
-    )
-    NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-        NavigationBarItem(
-            selected = tab == "home" && Store.stack.isEmpty(),
-            onClick = { Store.gotoTab("home") },
-            colors = colors,
-            icon = { Icon(Icons.Filled.Home, contentDescription = "Beranda") },
-            label = { Text("Beranda", fontSize = 11.sp, fontWeight = if (tab == "home" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
-        )
-        NavigationBarItem(
-            selected = tab == "notifs" && Store.stack.isEmpty(),
-            onClick = { Store.gotoTab("notifs") },
-            colors = colors,
-            icon = {
-                BadgedBox(badge = {
-                    val n = Store.unread.value
-                    if (n > 0) {
-                        Badge(containerColor = BlueAccent) {
-                            Text(if (n > 9) "9+" else n.toString(), fontSize = 10.sp)
-                        }
-                    }
-                }) { Icon(Icons.Filled.Notifications, contentDescription = "Notifikasi") }
-            },
-            label = { Text("Notifikasi", fontSize = 11.sp, fontWeight = if (tab == "notifs" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
-        )
-        NavigationBarItem(
-            selected = tab == "settings" && Store.stack.isEmpty(),
-            onClick = { Store.gotoTab("settings") },
-            colors = colors,
-            icon = { Icon(Icons.Filled.Settings, contentDescription = "Pengaturan") },
-            label = { Text("Pengaturan", fontSize = 11.sp, fontWeight = if (tab == "settings" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
-        )
-        NavigationBarItem(
-            selected = tab == "profile" && Store.stack.isEmpty(),
-            onClick = { Store.gotoTab("profile") },
-            colors = colors,
-            icon = { Icon(Icons.Filled.Person, contentDescription = "Profil") },
-            label = { Text("Profil", fontSize = 11.sp, fontWeight = if (tab == "profile" && Store.stack.isEmpty()) FontWeight.Bold else FontWeight.Normal) }
+    val shape = RoundedCornerShape(26.dp)
+    Surface(
+        shape = shape,
+        color = MaterialTheme.colorScheme.surface,
+        border = cardBorder(),
+        modifier = Modifier
+            .navigationBarsPadding() // jarak dari bilah gestur/sistem
+            .padding(start = 18.dp, end = 18.dp, bottom = 12.dp)
+            .fillMaxWidth()
+            .height(66.dp)
+            .cardShadow(shape)
+    ) {
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            NavItem(
+                Icons.Filled.Home, "Beranda",
+                selected = tab == "home" && Store.stack.isEmpty(),
+                modifier = Modifier.weight(1f)
+            ) { Store.gotoTab("home") }
+            NavItem(
+                Icons.Filled.Notifications, "Notifikasi",
+                selected = tab == "notifs" && Store.stack.isEmpty(),
+                modifier = Modifier.weight(1f)
+            ) { Store.gotoTab("notifs") }
+            NavItem(
+                Icons.Filled.Settings, "Pengaturan",
+                selected = tab == "settings" && Store.stack.isEmpty(),
+                modifier = Modifier.weight(1f)
+            ) { Store.gotoTab("settings") }
+            NavItem(
+                Icons.Filled.Person, "Profil",
+                selected = tab == "profile" && Store.stack.isEmpty(),
+                modifier = Modifier.weight(1f)
+            ) { Store.gotoTab("profile") }
+        }
+    }
+}
+
+/** Butir navigasi modern: pil indikator di belakang ikon + label kecil. */
+@Composable
+private fun NavItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp)
+    ) {
+        BadgedBox(badge = {
+            val n = Store.unread.value
+            if (label == "Notifikasi" && n > 0) {
+                Badge(containerColor = BlueAccent) {
+                    Text(if (n > 9) "9+" else n.toString(), fontSize = 10.sp)
+                }
+            }
+        }) {
+            Box(
+                Modifier
+                    .size(if (selected) 36.dp else 30.dp)
+                    .background(
+                        if (selected) GreenPrimary.copy(alpha = 0.16f) else Color.Transparent,
+                        RoundedCornerShape(18.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = label,
+                    tint = if (selected) GreenPrimary else GrayMuted,
+                    modifier = Modifier.size(if (selected) 22.dp else 21.dp)
+                )
+            }
+        }
+        Text(
+            label,
+            fontSize = 10.5.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) MaterialTheme.colorScheme.onSurface else GrayMuted
         )
     }
 }

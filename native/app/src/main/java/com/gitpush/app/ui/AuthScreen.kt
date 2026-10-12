@@ -198,9 +198,9 @@ fun AuthScreen() {
 private fun FeatureTile(icon: ImageVector, title: String, subtitle: String, modifier: Modifier = Modifier) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(15.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = modifier
+        shape = RoundedCornerShape(16.dp),
+        border = cardBorder(),
+        modifier = modifier.cardShadow(RoundedCornerShape(16.dp))
     ) {
         Column(
             Modifier.fillMaxWidth().padding(vertical = 13.dp, horizontal = 8.dp),

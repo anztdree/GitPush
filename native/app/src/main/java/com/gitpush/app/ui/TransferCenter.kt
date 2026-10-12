@@ -214,9 +214,7 @@ fun UploadTray(modifier: Modifier = Modifier) {
             shape = RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 8.dp,
-            border = androidx.compose.foundation.BorderStroke(
-                1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
-            ),
+            border = cardBorder(),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {

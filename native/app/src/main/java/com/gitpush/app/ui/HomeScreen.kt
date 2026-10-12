@@ -2,6 +2,7 @@ package com.gitpush.app.ui
 
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -353,7 +354,7 @@ fun HomeScreen() {
                             } else null
                         ) }
                     else -> itemsIndexed(filtered, key = { _, r -> "${r.id}-${r.fullName}" }) { _, repo ->
-                        Box(Modifier.padding(horizontal = 16.dp, vertical = 5.dp)) {
+                        Box(Modifier.padding(horizontal = 16.dp, vertical = 7.dp)) {
                             RepoCard(
                                 repo = repo,
                                 usage = usageMap[repo.fullName],
@@ -471,12 +472,13 @@ private fun RepoCard(
 ) {
     var menu by remember { mutableStateOf(false) }
     val accent = if (repo.isPrivate) YellowWarn else GreenPrimary
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(20.dp)
     Card(
         shape = shape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        modifier = Modifier.fillMaxWidth().combinedClickable(
+        border = cardBorder(),
+        modifier = Modifier.fillMaxWidth().cardShadow(shape).combinedClickable(
             onClick = {
                 Store.push(
                     Screen.Repo(
@@ -489,19 +491,9 @@ private fun RepoCard(
                 )
             },
             onLongClick = onLongClick
-        ).border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-    ) {
-        // garis aksen tipis di atas kartu — privat kuning, publik hijau
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(3.dp)
-                .background(
-                    if (repo.isPrivate) Brush.horizontalGradient(listOf(YellowWarn.copy(alpha = 0.7f), YellowWarn.copy(alpha = 0.15f)))
-                    else Brush.horizontalGradient(listOf(GreenPrimary.copy(alpha = 0.75f), GreenPrimary.copy(alpha = 0.12f)))
-                )
         )
-        Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 12.dp, bottom = 14.dp, end = 4.dp), verticalAlignment = Alignment.Top) {
+    ) {
+        Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 13.dp, bottom = 14.dp, end = 4.dp), verticalAlignment = Alignment.Top) {
             // Badge ikon repo (buku) — identitas repository, dibedakan dari ikon folder isi repo
             Box(
                 Modifier.size(44.dp).background(

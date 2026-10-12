@@ -77,9 +77,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -222,8 +225,14 @@ fun ErrorCard(message: String, onRetry: (() -> Unit)? = null) {
 fun EmptyState(icon: ImageVector, title: String, subtitle: String, action: (@Composable () -> Unit)? = null) {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = null, tint = GrayMuted, modifier = Modifier.size(44.dp))
-            Spacer(Modifier.height(12.dp))
+            // Ikon dalam medali berwarna — jauh lebih hidup daripada ikon abu telanjang
+            Box(
+                Modifier.size(66.dp).background(GreenPrimary.copy(alpha = 0.12f), RoundedCornerShape(22.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = GreenPrimary, modifier = Modifier.size(30.dp))
+            }
+            Spacer(Modifier.height(14.dp))
             Text(title, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
             Spacer(Modifier.height(4.dp))
             Text(
@@ -455,6 +464,37 @@ fun OperationOverlay() {
 
 // ---------- Komponen desain bersama (tipografi & tata letak konsisten) ----------
 
+/**
+ * Identitas bahasa desain "Modern Light": di tema terang kartu TANPA garis
+ * pinggir — cukup permukaan putih di atas kanvas abu lembut (ala Files by
+ * Google / GitHub mobile), sedangkan tema gelap tetap memakai garis tipis
+ * untuk memisahkan permukaan.
+ */
+@Composable
+fun isDarkTheme(): Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
+/**
+ * Bayangan kartu lembut (kehijauan-abu, bukan hitam pekat) — hanya dirender
+ * di tema terang agar tidak dobel dengan garis pinggir tema gelap.
+ */
+@Composable
+fun Modifier.cardShadow(shape: Shape): Modifier {
+    val dark = isDarkTheme()
+    return if (dark) this else this.shadow(
+        elevation = 5.dp,
+        shape = shape,
+        clip = false,
+        ambientColor = Color(0xFF44546B),
+        spotColor = Color(0xFF44546B)
+    )
+}
+
+/** Garis pinggir kartu — hanya di tema gelap; tema terang bersih tanpa garis. */
+@Composable
+fun cardBorder() = if (isDarkTheme())
+    BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+else null
+
 /** Label seksi huruf kapital dengan jarak huruf — identitas tata letak GitPush. */
 @Composable
 fun SectionLabel2(text: String, modifier: Modifier = Modifier, trailing: (@Composable () -> Unit)? = null) {
@@ -546,7 +586,7 @@ fun MetaChip(icon: ImageVector, text: String, tint: Color = GrayMuted) {
 @Composable
 fun HeroPanel(
     modifier: Modifier = Modifier,
-    corner: Dp = 22.dp,
+    corner: Dp = 24.dp,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
 ) {
     Box(
@@ -593,19 +633,18 @@ fun GpCard(
 ) {
     val shape = RoundedCornerShape(corner)
     val bg = container ?: MaterialTheme.colorScheme.surface
-    val border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     if (onClick != null) {
         Surface(
             onClick = onClick,
             shape = shape,
             color = bg,
-            border = border,
+            border = cardBorder(),
             modifier = modifier.fillMaxWidth()
         ) {
             Column(Modifier.fillMaxWidth().padding(padding), content = content)
         }
     } else {
-        Surface(shape = shape, color = bg, border = border, modifier = modifier.fillMaxWidth()) {
+        Surface(shape = shape, color = bg, border = cardBorder(), modifier = modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth().padding(padding), content = content)
         }
     }
@@ -619,6 +658,7 @@ fun SearchField(
     placeholder: String,
     modifier: Modifier = Modifier
 ) {
+    val dark = isDarkTheme()
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
@@ -631,10 +671,13 @@ fun SearchField(
                 }
             }
         },
-        shape = RoundedCornerShape(15.dp),
+        shape = RoundedCornerShape(16.dp),
         colors = OutlinedTextFieldDefaults.colors(
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+            // Terang: pil putih melayang dengan bayangan — bukan kotak abu datar
+            unfocusedContainerColor = if (dark) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+            else MaterialTheme.colorScheme.surface,
+            focusedContainerColor = if (dark) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
+            else MaterialTheme.colorScheme.surface,
             unfocusedBorderColor = Color.Transparent,
             focusedBorderColor = GreenPrimary.copy(alpha = 0.55f),
             cursorColor = GreenPrimary,
@@ -642,7 +685,7 @@ fun SearchField(
             unfocusedTextColor = MaterialTheme.colorScheme.onSurface
         ),
         singleLine = true,
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth().cardShadow(RoundedCornerShape(16.dp))
     )
 }
 
@@ -702,7 +745,7 @@ fun SkeletonRows(rows: Int = 6, modifier: Modifier = Modifier) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                border = cardBorder()
             ) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(40.dp).alpha(a).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(13.dp)))

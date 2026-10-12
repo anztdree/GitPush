@@ -155,11 +155,11 @@ private fun gpTypography(): Typography = Typography(
 )
 
 private val GpShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(14.dp),
-    large = RoundedCornerShape(18.dp),
-    extraLarge = RoundedCornerShape(24.dp)
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp)
 )
 
 private val DarkColors = darkColorScheme(
@@ -204,21 +204,21 @@ private val LightColors = lightColorScheme(
     onTertiary = Color(0xFFFFFFFF),
     tertiaryContainer = Color(0xFFECE1FF),
     onTertiaryContainer = Color(0xFF2E0A5A),
-    background = Color(0xFFF6F8FA),
+    background = Color(0xFFF3F5F9),
     onBackground = Color(0xFF1F2328),
     surface = Color(0xFFFFFFFF),
     onSurface = Color(0xFF1F2328),
-    surfaceVariant = Color(0xFFE9EEF3),
-    onSurfaceVariant = Color(0xFF57606A),
+    surfaceVariant = Color(0xFFE9EDF4),
+    onSurfaceVariant = Color(0xFF5B6472),
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFFBFCFD),
+    surfaceContainerLow = Color(0xFFFAFBFD),
     surfaceContainer = Color(0xFFFFFFFF),
-    surfaceContainerHigh = Color(0xFFF6F8FA),
-    surfaceContainerHighest = Color(0xFFEFF2F6),
+    surfaceContainerHigh = Color(0xFFF3F5F9),
+    surfaceContainerHighest = Color(0xFFEBEFF5),
     surfaceBright = Color(0xFFFFFFFF),
-    surfaceDim = Color(0xFFE0E5EA),
-    outline = Color(0xFFD1D9E0),
-    outlineVariant = Color(0xFFE4E9EE),
+    surfaceDim = Color(0xFFDFE4EB),
+    outline = Color(0xFFD3DAE3),
+    outlineVariant = Color(0xFFE6EAF1),
     error = Color(0xFFCF222E),
     onError = Color(0xFFFFFFFF),
     errorContainer = Color(0xFFFFE5E5),
@@ -243,8 +243,7 @@ fun GitPushTheme(content: @Composable () -> Unit) {
     // Bilah sistem (status & navigasi) ikut tema — bukan lagi gelap permanen
     // dari tema XML (yang membuat mode terang terasa setengah jadi).
     val view = LocalView.current
-    val statusBar = if (dark) Color(0xFF0A0E14) else Color(0xFFF6F8FA)
-    val navBar = if (dark) Color(0xFF0A0E14) else Color(0xFFFFFFFF)
+    val statusBar = if (dark) Color(0xFF0A0E14) else Color(0xFFF3F5F9)
     SideEffect {
         val window = (view.context as? android.app.Activity)?.window ?: return@SideEffect
         androidx.core.view.WindowCompat.getInsetsController(window, view).apply {
@@ -253,8 +252,13 @@ fun GitPushTheme(content: @Composable () -> Unit) {
         }
         @Suppress("DEPRECATION")
         window.statusBarColor = statusBar.toArgb()
+        // Bilah navigasi sistem TRANSPARAN — bottom nav melayang di atas kanvas,
+        // tanpa strip abu pemisah ala aplikasi lama.
         @Suppress("DEPRECATION")
-        window.navigationBarColor = navBar.toArgb()
+        window.navigationBarColor = Color.Transparent.toArgb()
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            window.isNavigationBarContrastEnforced = false
+        }
     }
     MaterialTheme(
         colorScheme = if (dark) DarkColors else LightColors,
