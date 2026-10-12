@@ -304,3 +304,21 @@ Stage Summary:
 - Self-review menemukan cacat jalur paket: file LFS yang GAGAL lalu fallback isi-penuh ikut pack memakai sha POINTER (bukan sha isi) → server pasti menolak pack. FIX: ada fallback LFS → seluruh unggahan langsung jalur API (hasLfsFallback guard).
 - Tambahan: dedup isi identik dalam satu batch (queuedShas — file kedua dengan byte sama cukup dirujuk, tak dikirim dua kali), counter viaLfs di jalur fallback.
 - versionCode 30; commit 74b2aff; tag v1.0 = 74b2aff; release body/nama diperbarui; aset APK baru sha256 ad35320fbf2fb4bb… (unduhan ulang terverifikasi).
+
+---
+Task ID: 32
+Agent: Z.ai Code (main)
+Task: "Oke .. sekarang pindah pada bagian icon .. icon Repository dan icon folder terasa sama . saya ingin berbeda.." → ikon Repository dibedakan dari ikon folder.
+
+Work Log:
+- Sandbox baru: checkout GitPush hilang → clone ulang dari GitHub (PAT disimpan kembali ke /home/z/.gp-pat); Android SDK & Gradle cache kosong → pasang cmdline-tools + platform-36 + build-tools 36.0.0 di /home/z/android-sdk; Temurin JDK 21 ke /home/z/build-restore/jdk-21 (JRE sistem tanpa javac).
+- DIAGNOSA: ikon repository & folder sama-sama memakai Icons.Filled.Folder di 4 titik: RepoCard Beranda (HomeScreen:539), EmptyState "Belum ada repository" (HomeScreen:361), RepoOverviewCard hero (RepoScreen:1736), peta aktivitas "repo" Profil (ProfileScreen:92).
+- FIX: repository → Icons.AutoMirrored.Filled.MenuBook (buku terbuka, gaya GitHub). Percobaan pertama Icons.Filled.Book GAGAL kompilasi (ikon "book" tidak ada di set klasik material-icons-extended — hanya di Material Symbols) → ganti MenuBook + import automirrored.
+- Ikon Folder TIDAK diubah di semua lokasi folder asli (FileBrowser, Common fileIcon, UploadSheet chip folder, menu "Buka folder", dialog pindah).
+- versionCode 31→32; README entri v32; build SUCCESSFUL (APK 4.489.773 B, sha256 a09d6929f8d2…); commit 3918f21 push origin/main.
+- Release v1.0 (ID 398661211): hapus ref tag → PATCH langsung kena 422 "tag_name is not a valid tag" (tag sudah tidak ada, beda dari putaran sebelumnya) → SOLUSI: push ulang tag v1.0 via git, lalu PATCH minimal {draft:false, tag_name} → terpublish; PATCH name terpisah → "Versi Final (build 32)". Aset lama 633997280 dihapus, GitPush-v1.0.apk build 32 terunggah (id 634289399, state uploaded). Unduh ulang: sha256 identik byte-per-byte.
+
+Stage Summary:
+- origin/main = 3918f21 (versionCode 32); tag v1.0 = 3918f21; release v1.0 "Versi Final (build 32)" + APK terverifikasi.
+- Repository tampil sebagai buku terbuka (Beranda, hero repo, profil, empty state); folder isi repo tetap ikon folder — tidak ada lagi kerancuan.
+- PELAJARAN BARU: setelah hapus ref tag, PATCH release dengan tag_name+target_commitish dalam SATU panggilan bisa 422; urutan aman = push ulang tag via git dulu, PATCH {draft:false, tag_name} minimal, lalu PATCH name terpisah.
