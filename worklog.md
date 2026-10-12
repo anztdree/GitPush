@@ -299,3 +299,8 @@ Stage Summary:
 - origin/main = 8ac7c8d (versionCode 29); tag v1.0 = 8ac7c8d; Release v1.0 berisi APK build 29 terverifikasi.
 - Unggahan kini dua jalur otomatis: paket git (setara terminal, 1 koneksi) dicoba dulu → jalur API blob andal sebagai fallback; file identik tidak pernah dikirim ulang; log 4 tahap bernomor + ringkasan akhir; tanpa batas jumlah/ukuran file.
 - Protokol smart-HTTP tervalidasi end-to-end lewat probe (termasuk perangkap edge-cache GitHub & format advertisement satu-oid).
+
+### Addendum Task 31 (build 30)
+- Self-review menemukan cacat jalur paket: file LFS yang GAGAL lalu fallback isi-penuh ikut pack memakai sha POINTER (bukan sha isi) → server pasti menolak pack. FIX: ada fallback LFS → seluruh unggahan langsung jalur API (hasLfsFallback guard).
+- Tambahan: dedup isi identik dalam satu batch (queuedShas — file kedua dengan byte sama cukup dirujuk, tak dikirim dua kali), counter viaLfs di jalur fallback.
+- versionCode 30; commit 74b2aff; tag v1.0 = 74b2aff; release body/nama diperbarui; aset APK baru sha256 ad35320fbf2fb4bb… (unduhan ulang terverifikasi).
