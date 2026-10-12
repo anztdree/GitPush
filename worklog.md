@@ -476,3 +476,23 @@ Stage Summary:
 - origin/main = 36fc590 (versionCode 39); tag v1.0 = 36fc590; release "Versi Final (build 39)" name+body+asset terverifikasi sha256 cbc7c1ade0ad333d….
 - README.md, file .md apa pun, catatan release, dan isi issue kini dirender penuh: gambar (termasuk URL relatif), tabel, HTML, task list, tautan klik — sesuai tema aplikasi.
 - PELAJARAN: ① Markwon AAR tanpa consumer rules → wajib -keep + -dontwarn sendiri saat minifyEnabled; ② "return@withContext null" + Pair bikin inferensi gagal — hindari label-return null di withContext bertipe Pair; ③ download_url API readme = sumber baseUrl paling akurat untuk URL relatif.
+
+---
+Task ID: 40
+Agent: Z.ai Code (main)
+Task: "jika download LFS harusnya file asli yg terdownload.. bukan 134 kb" — unduhan file Git LFS menghasilkan pointer ±134 B, bukan konten asli.
+
+Work Log:
+- Telusuri jalur unduh: SEMUA lewat downloadFile (list RepoScreen, 2 tombol di FileScreens) + zipBlobs (ZIP folder) — keduanya sudah sadar-LFS sejak v1.1.
+- Uji LIVE end-to-end dengan repo scratch gp-scratch-lfs: upload objek LFS asli via batch API (big.bin 2 MB + mid.bin 137 KB), commit pointer, lalu replikasi persis logika aplikasi → SEMUA jalur (contents API, deteksi isi, batch download) TERBUKTI JALAN; sha256 konten unduhan = oid.
+- Scan SEMUA repo akun user untuk blob 120–160 B → 15 pointer LFS asli ditemukan (semua di ubl-s23: magisk img 64 MB, vendor_boot 100 MB, TWRP 100 MB, modul zip, backup SPL). Uji per-file dengan alur aplikasi: 15/15 OK terunduh utuh.
+- FAKTA KUNCI (terverifikasi live): blob git utk file LFS SELALU pointer kecil → Contents API SELALU mengirim content (walau objek 100+ MB), kolom size = ukuran ASLI → deteksi via isi harusnya menangkap semua. Karena bug tetap dilaporkan, deteksi dipertebal jadi 3 LAPIS (anti regression di semua kombinasi): (1) isLfs dari fetchFileMeta, (2) ada isi → cek pointer TANPA memandang size (dulu terpaku 1..1024 — celah yang paling mungkin), (3) tanpa isi + size kecil → probe blob. TIDAK probe blob utk file besar tanpa isi: /git/blobs ditolak >100 MB (menghindari regresi baru).
+- resolveLfsPointers: rentang kandidat 120..160 → 110..300 (pointer CRLF/properti ekstra ikut ter-resolve di daftar & ZIP).
+- HAMPIR REGRESI: edit pertama memproba blob untuk SEMUA file tanpa isi — dibatalkan (file non-LFS ≥100 MB akan gagal unduh). Dikoreksi sebelum build.
+- versionCode 39→40; README entri v40; build SUCCESSFUL (APK 4.779.543 B, sha256 bb076786…, aapt versionCode 40).
+- Rilis: commit 03f708e push main; tag -f v1.0 → 03f708e; PATCH release name "Versi Final (build 40)" + body baru; asset lama 635139702 DELETE 204; upload id 635197042; unduh ulang octet-stream → sha256 IDENTIK. Cleanup: repo scratch gp-scratch-lfs di-DELETE.
+
+Stage Summary:
+- origin/main = 03f708e (versionCode 40); release "Versi Final (build 40)" terverifikasi.
+- Unduhan LFS kini 3-lapis anti-pointer; 15/15 file LFS nyata user terverifikasi terunduh utuh via API.
+- PELAJARAN: ① blob LFS selalu kecil → content SELALU ada di Contents API satu-file (batas 1 MB dihitung dari blob, bukan objek LFS); ② JANGAN pernah probe /git/blobs untuk blob besar (>100 MB ditolak); ③ kolom size API satu-file = ukuran ASLI LFS — jangan dipakai sebagai penanda pointer.
