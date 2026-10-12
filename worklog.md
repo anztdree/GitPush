@@ -322,3 +322,22 @@ Stage Summary:
 - origin/main = 3918f21 (versionCode 32); tag v1.0 = 3918f21; release v1.0 "Versi Final (build 32)" + APK terverifikasi.
 - Repository tampil sebagai buku terbuka (Beranda, hero repo, profil, empty state); folder isi repo tetap ikon folder — tidak ada lagi kerancuan.
 - PELAJARAN BARU: setelah hapus ref tag, PATCH release dengan tag_name+target_commitish dalam SATU panggilan bisa 422; urutan aman = push ulang tag via git dulu, PATCH {draft:false, tag_name} minimal, lalu PATCH name terpisah.
+
+---
+Task ID: 33
+Agent: Z.ai Code (main)
+Task: Tiga keluhan user — ① tombol di bawah pencarian Beranda ("Repo saya", "Semua GitHub", "Semua", "Publik") sampah & tak berguna; ② di dalam repo tak ada ".." untuk kembali ke folder sebelumnya; ③ pop-up titik-tiga muncul arah salah di SEMUA tombol titik-tiga.
+
+Work Log:
+- DIAGNOSA ③: semua DropdownMenu dideklarasikan sebagai child langsung dari Row/Surface lebar-penuh (popup mengikat ke kontainer, bukan tombol) — menu repo (RepoScreen:500), menu branch (:611), menu baris file (:1191). Menu kartu repo Beranda SUDAH benar (sudah dalam Box).
+- FIX ③: bungkus IconButton/OutlinedButton + DropdownMenu bersama dalam Box di 3 titik; OutlinedButton branch pindah Modifier.weight → Box(weight) + fillMaxWidth.
+- FIX ②: baris ".." ala file manager klasik selalu item pertama daftar file repo saat path tak kosong (Surface kartu + badge ArrowUpward palet folder + teks ".. / Folder atas" → openDir(substringBeforeLast('/'))).
+- FIX ①: chip-row Beranda DIHAPUS total (4 chip + filter var + .let filter public/private + import FilterChip/horizontalScroll/rememberScrollState). Pencarian global dipertahankan secara KONTEKSTUAL: EmptyState kini punya param action opsional (kompatibel 7 pemanggil lama) → tombol "Cari "q" di seluruh GitHub" hanya muncul saat mode lokal & hasil kosong; banner tipis "Mencari di seluruh GitHub • ← Repo saya" saat mode global aktif.
+- versionCode 32→33; README entri v33; build SUCCESSFUL; commit f952c05 push origin/main.
+- Release v1.0: git tag -f v1.0 f952c05 + push -f (ref TIDAK dihapus kali ini → release tetap published, tanpa drama draft); aset lama dihapus, APK v33 terunggah (id 634469282); PATCH name "Versi Final (build 33)"; unduh ulang sha256 fd8ed139… identik.
+
+Stage Summary:
+- origin/main = f952c05 (versionCode 33); tag v1.0 = f952c05; release "Versi Final (build 33)" + APK terverifikasi.
+- Beranda: satu kolom pencarian bersih; global search kontekstual tanpa chip permanen.
+- Repo: ".." folder atas selalu paling atas; semua pop-up titik-tiga/branch anchor tepat di bawah tombolnya.
+- PELAJARAN: git tag TIDAK punya -q; kali ini tag dipindah TANPA menghapus ref dulu → release tidak jadi draft (urutan lebih aman dari putaran 32).
