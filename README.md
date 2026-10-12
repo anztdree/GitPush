@@ -81,9 +81,9 @@ node scripts/gen-android-icons.mjs   # → native/app/src/main/res
 
 ## 📜 Versi
 
-Aplikasi memakai label versi **1.0** (versionCode 29) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
+Aplikasi memakai label versi **1.0** (versionCode 30) — versi final. Pembaruan build tetap dirilis lewat tab **Releases**: nomor build internal (versionCode) naik otomatis sehingga install di atas versi lama berjalan mulus tanpa perlu uninstall.
 
-**Unggah secepat terminal — paket git (versionCode 29):** keluhan "unggah 1 MB atau ratusan file terasa lama, padahal via terminal sangat cepat" akhirnya dijawab di akar masalahnya. Unggahan kini mencoba **jalur paket git** (protokol smart-HTTP yang sama dipakai `git push` di terminal): **semua file dikirim dalam SATU koneksi** sebagai packfile biner terkompresi zlib — tanpa request per-file, tanpa jeda anti-limit, tanpa base64. Ratusan file kecil selesai dalam hitungan detik, bukan menit. Detail pentingnya:
+**Unggah secepat terminal — paket git (versionCode 30):** keluhan "unggah 1 MB atau ratusan file terasa lama, padahal via terminal sangat cepat" akhirnya dijawab di akar masalahnya. Unggahan kini mencoba **jalur paket git** (protokol smart-HTTP yang sama dipakai `git push` di terminal): **semua file dikirim dalam SATU koneksi** sebagai packfile biner terkompresi zlib — tanpa request per-file, tanpa jeda anti-limit, tanpa base64. Ratusan file kecil selesai dalam hitungan detik, bukan menit. Detail pentingnya:
 - **Deteksi "up-to-date" ala git**: setiap file dihitung sha blob-nya di HP; file yang isinya **sudah ada di repo tidak dikirim ulang sama sekali** (dilewati dengan catatan jelas di log) — unggah ulang folder yang sama nyaris instan.
 - **Isi sama = hemat kirim**: file berisi byte yang sama dengan objek lain di repo cukup dirujuk sha-nya, tanpa mengirim isi.
 - **Fallback otomatis & transparan**: bila jalur paket tidak tersedia (izin token, jaringan tidak stabil), proses beralih sendiri ke jalur API blob lama yang terbukti andal — log menjelaskan alasan peralihannya; tidak ada unggahan yang gagal total karena jalur.

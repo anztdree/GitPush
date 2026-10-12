@@ -1013,9 +1013,15 @@ object GitHubApi {
 
         // ===== TAHAP 4a — JALUR CEPAT: PAKET GIT (satu koneksi, seperti terminal) =====
         var packTried = false
-        if (baseListing != null) {
+        // File LFS yang GAGAL lalu fallback ke blob isi-penuh TIDAK boleh ikut pack:
+        // sha1 yang dihitung untuk LFS adalah sha POINTER-nya, bukan sha isi — tree akan
+        // merujuk sha yang salah dan server pasti menolak pack (index-pack failed).
+        // Sederhananya: ada fallback LFS → seluruh unggahan lewat jalur API (andalan).
+        val hasLfsFallback = files.indices.any { lfsFallback[it] == true && unchangedFlag[it] != true }
+        if (baseListing != null && !hasLfsFallback) {
             val lastLocal = ConcurrentHashMap<String, Long>()
             val entries = ArrayList<GitPackPush.Entry>()
+            val queuedShas = HashSet<String>() // isi identik dalam satu batch → cukup satu objek di pack
             for (i in files.indices) {
                 if (unchangedFlag[i] == true || lfsFailed[i] == true) continue
                 val f = files[i]
@@ -1031,14 +1037,6 @@ object GitHubApi {
                         ))
                         viaLfs.incrementAndGet()
                     }
-                    // LFS gagal tapi ≤99 MB → isi penuh ikut pack (blob biasa)
-                    plan.lfs && lfsFallback[i] == true && plan.gitSha1 != null -> {
-                        entries.add(GitPackPush.Entry(
-                            f.path, plan.size, plan.gitSha1!!, true, source = f,
-                            onSent = packProgress(f.path, plan.size, plan.size, ctx, lastLocal, doneOnce, hooks)
-                        ))
-                        viaPack.incrementAndGet()
-                    }
                     // isi sama dengan objek lain di repo → cukup dirujuk (tanpa kirim)
                     dupFlag[i] == true && plan.gitSha1 != null -> {
                         entries.add(GitPackPush.Entry(f.path, plan.size, plan.gitSha1!!, sendBlob = false))
@@ -1047,10 +1045,16 @@ object GitHubApi {
                     }
                     // file biasa (bukan LFS) dengan sha1 valid
                     !plan.lfs && plan.gitSha1 != null -> {
-                        entries.add(GitPackPush.Entry(
-                            f.path, plan.size, plan.gitSha1!!, true, source = f,
-                            onSent = packProgress(f.path, plan.size, plan.size, ctx, lastLocal, doneOnce, hooks)
-                        ))
+                        if (queuedShas.add(plan.gitSha1!!)) {
+                            entries.add(GitPackPush.Entry(
+                                f.path, plan.size, plan.gitSha1!!, true, source = f,
+                                onSent = packProgress(f.path, plan.size, plan.size, ctx, lastLocal, doneOnce, hooks)
+                            ))
+                        } else {
+                            // isi identik dengan file lain di batch ini → tak perlu objek kedua
+                            entries.add(GitPackPush.Entry(f.path, plan.size, plan.gitSha1!!, sendBlob = false))
+                            if (doneOnce.add(f.path)) hooks.onFileDone(f.path, plan.size)
+                        }
                         viaPack.incrementAndGet()
                     }
                     // else: sha1 gagal dihitung → file ditangani jalur API di bawah
@@ -1136,8 +1140,8 @@ object GitHubApi {
                                 dupFlag[idx] == true && plan.gitSha1 != null -> plan.gitSha1!!
                                 // LFS sukses → pointer dikirim sebagai blob kecil
                                 plan.lfs && pointerBytes[idx] != null -> {
-                                    val s = ctx.smallBlob(pointerBytes[idx]!!)
-                                    s
+                                    viaLfs.incrementAndGet()
+                                    ctx.smallBlob(pointerBytes[idx]!!)
                                 }
                                 // LFS gagal → fallback blob biasa (≤99 MB)
                                 plan.lfs && lfsFallback[idx] == true -> {
