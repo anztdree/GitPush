@@ -380,3 +380,23 @@ Work Log:
 Stage Summary:
 - Perubahan TERSLIHAT jelas: tanpa garis kartu + bayangan + nav melayang + sudut membulat + kanvas baru.
 - Komit 56a8e62 (kode) + entri README v35; versionCode 35.
+
+---
+Task ID: 35
+Agent: Z.ai Code (main)
+Task: "Fungsi di dalam Repository ada opsi kosongkan Repository.. tapi release tetap di pertahankan" — fitur KOSONGKAN REPOSITORY, rilis GitHub (release) tidak ikut terhapus.
+
+Work Log:
+- Desain API: bukan hapus file satu-per-satu (lambat + rawan rate-limit), tapi SATU commit berisi tree kosong via Git Data API — pola sama dengan renameFile/deleteFolder yang sudah teruji.
+- GitHubApi.emptyRepo(token, owner, repo, branch, onStage): refSha → commitTreeSha → fetchTreeRecursive (hitung blob; 0 blob → GhException 404 "Repository sudah kosong" agar tak diulang) → POST /git/trees {"tree":[]} TANPA base_tree (tree benar-benar kosong) → POST /git/commits (parent = HEAD, message "Kosongkan repository via GitPush") → PATCH /git/refs/heads/{branch}; retry 3x anti non-fast-forward; invalidateUsage() setelah sukses. Return commitSha to jumlah file. Karena murni commit BARU di atas sejarah lama → commit lama, tag, dan RELEASE GitHub 100% tersentuh nol.
+- RepoExtra.kt: EmptyRepoDialog(owner, name, branch, onDismiss, onEmptied) — dialog merah dengan kotak info HIJAU "Riwayat commit, tag, dan RELEASE tetap utuh", konfirmasi wajib ketik "KOSONGKAN" (tombol aktif setelah cocok), tombol "Kosongkan sekarang" + spinner saat proses, error 403 dijelaskan (PAT perlu scope repo). Import +GhException.
+- RepoScreen.kt: state emptyRepoDialog; menu titik-tiga halaman repo dapat item "Kosongkan repository" (ikon DeleteSweep, merah) di zona merah TEPAT DI ATAS "Hapus repository"; wiring onEmptied → folderCache.clear() + path="" + lastRepoPath reset + openDir("") + reloadMeta() + loadRepoInfo() (daftar file, commit terakhir, ukuran repo langsung segar).
+- versionCode 35→36; README entri v36 ("Kosongkan repository dalam satu ketukan — release tetap aman").
+- Build SUCCESSFUL (JDK 21 /home/z/build-restore/jdk-21): APK 4.506.173 B, sha256 018122a3….
+- Rilis: commit de29638 push main; git tag -f v1.0 de29638 + push -f (release tetap published); PATCH {draft:false,tag_name} → PATCH name "Versi Final (build 36)"; aset lama id 634663364 di-DELETE (204); APK v36 terunggah id 634698124; unduh ulang Accept: application/octet-stream → sha256 018122a3… IDENTIK.
+- SNAG: panggilan DELETE pertama salah URL "release/assets" (404) — benar "releases/assets"; unduh verifikasi pertama 1.645 B karena tanpa header octet-stream (isi JSON error).
+
+Stage Summary:
+- origin/main = de29638 (versionCode 36); tag v1.0 = de29638; release "Versi Final (build 36)" + GitPush-v1.0.apk 4.506.173 B terverifikasi sha256.
+- Fitur baru: "Kosongkan repository" di menu titik-tiga repo — semua file hilang dalam 1 commit, riwayat/tag/RELEASE kebal (sesuai tuntutan user: release tetap dipertahankan).
+- PELAJARAN: verifikasi aset release wajib header Accept: application/octet-stream; endpoint aset = releases/assets (jamak).
